@@ -1,6 +1,6 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+---
+applyTo: '**/*'
+---
 
 ## Project Overview
 
@@ -8,26 +8,16 @@ A React-based chat interface for Pydantic AI that uses Vercel AI SDK and Element
 
 ## Development Commands
 
-**Frontend:**
-
 ```bash
-npm install
-npm run dev              # Start dev server (proxies /api to localhost:8000)
-npm run build            # Build for production (CDN deployment via jsdelivr)
-npm run typecheck        # Type check without emitting
-npm run lint             # Run ESLint
-npm run lint-fix         # Fix ESLint issues
-npm run format           # Format with Prettier
+pnpm install
+pnpm run dev              # Start dev server
+pnpm run dev:server       # Start backend server
+pnpm run build            # Build for production (CDN deployment via jsdelivr)
+pnpm run typecheck        # Type check without emitting
+pnpm run lint             # Run ESLint
+pnpm run lint-fix         # Fix ESLint issues
+pnpm run format           # Format with Prettier
 ```
-
-**Backend:**
-
-```bash
-cd agent
-uv run uvicorn chatbot.server:app  # Start backend on port 8000
-```
-
-Note: Stop any logfire platform instances to avoid port 8000 conflicts.
 
 ## Architecture
 
@@ -63,9 +53,7 @@ Note: Stop any logfire platform instances to avoid port 8000 conflicts.
 ### Backend Structure
 
 - **agent/chatbot/server.py**: FastAPI app with Vercel AI adapter, model/tool configuration
-- **agent/chatbot/agent.py**: Pydantic AI agent with documentation search tools
-- **agent/chatbot/db.py**: LanceDB vector store for documentation
-- **agent/chatbot/data.py**: Documentation loading and processing
+- **agent/chatbot/agent.py**: Pydantic AI agent with simple mock weather tool
 
 ### Backend Integration
 
@@ -76,23 +64,14 @@ Note: Stop any logfire platform instances to avoid port 8000 conflicts.
   - Accepts `model` and `builtinTools` in request body extra data
   - Streams responses using SSE
 
-**Builtin Tools:**
-
-- `web_search`, `code_execution`, `image_generation`
-- Enabled per-model in AI_MODELS configuration
-- Selected tools passed to agent via `VercelAIAdapter.dispatch_request`
-
 ## Configuration
 
 - **TypeScript paths**: `@/*` maps to `./src/*`
-- **Vite base URL**: CDN path for production (`jsdelivr.net/npm/@pydantic/pydantic-ai-chat/dist/`)
-- **Dev proxy**: `/api` proxied to `localhost:8000`
-- **Package**: Published as `@pydantic/pydantic-ai-chat` (public npm package)
 
 ## Tech Stack
 
 - React 19, TypeScript, Vite, Tailwind CSS 4
 - Vercel AI SDK (`@ai-sdk/react`, `ai`)
 - Radix UI primitives
-- FastAPI, Pydantic AI, LanceDB
+- FastAPI, Pydantic AI
 - ESLint (neostandard), Prettier
