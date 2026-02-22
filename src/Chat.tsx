@@ -2,7 +2,6 @@ import { Conversation, ConversationContent, ConversationScrollButton } from '@/c
 import { Loader } from '@/components/ai-elements/loader'
 import {
   PromptInput,
-  PromptInputButton,
   PromptInputModelSelect,
   PromptInputModelSelectContent,
   PromptInputModelSelectItem,
@@ -11,15 +10,10 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputToolbar,
-  PromptInputTools,
 } from '@/components/ai-elements/prompt-input'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Switch } from '@/components/ui/switch'
 import { useChat } from '@ai-sdk/react'
-import { Settings2Icon } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 import { useThrottle } from '@uidotdev/usehooks'
@@ -27,47 +21,37 @@ import { nanoid } from 'nanoid'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 import type { ConversationEntry } from './types'
-import { getToolIcon } from '@/lib/tool-icons'
 
-interface ModelConfig {
+interface AgentConfig {
   id: string
   name: string
-  builtinTools: string[]
 }
 
-interface BuiltinTool {
-  name: string
-  id: string
-}
-
-// TODO: if just a single model, don't show model selector, just a label.
 interface RemoteConfig {
-  models: ModelConfig[]
-  builtinTools: BuiltinTool[]
+  agents: AgentConfig[]
 }
 
-async function getModels() {
+async function getAgents() {
   const res = await fetch('/api/configure')
   return (await res.json()) as RemoteConfig
 }
 
 const Chat = () => {
   const [input, setInput] = useState('')
-  const [model, setModel] = useState<string>('')
-  const [enabledTools, setEnabledTools] = useState<string[]>([])
+  const [agentId, setAgentId] = useState<string>('')
   const { messages, sendMessage, status, setMessages, regenerate, error } = useChat()
   const throttledMessages = useThrottle(messages, 500)
   const [conversationId, setConversationId] = useConversationIdFromUrl()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const configQuery = useQuery({
-    queryFn: getModels,
-    queryKey: ['models'],
+    queryFn: getAgents,
+    queryKey: ['agents'],
   })
 
   useEffect(() => {
-    if (configQuery.data) {
-      setModel(configQuery.data.models[0].id)
+    if (configQuery.data?.agents[0]) {
+      setAgentId(configQuery.data.agents[0].id)
     }
   }, [configQuery.data])
 
@@ -102,7 +86,7 @@ const Chat = () => {
       sendMessage(
         { text: input },
         {
-          body: { model, builtinTools: enabledTools },
+          body: { agentId },
         },
       ).catch((error: unknown) => {
         console.error('Error sending message:', error)
@@ -122,11 +106,6 @@ const Chat = () => {
       console.error('Error regenerating message:', error)
     })
   }
-
-  const availableTools = useMemo(() => {
-    const enabledToolIds = configQuery.data?.models.find((entry) => entry.id === model)?.builtinTools ?? []
-    return configQuery.data?.builtinTools.filter((tool) => enabledToolIds.includes(tool.id)) ?? []
-  }, [configQuery.data, model])
 
   if (conversationId !== '/' && messages.length === 0) {
     return null
@@ -185,70 +164,25 @@ const Chat = () => {
             autoFocus={true}
           />
           <PromptInputToolbar>
-            <PromptInputTools>
-              {availableTools.length > 0 && (
-                <DropdownMenu>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <DropdownMenuTrigger asChild>
-                        <PromptInputButton variant="outline">
-                          <Settings2Icon className="size-4" />
-                        </PromptInputButton>
-                      </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>Tools</TooltipContent>
-                  </Tooltip>
-                  <DropdownMenuContent align="start">
-                    {availableTools.map((tool) => (
-                      <div
-                        key={tool.id}
-                        className="flex items-center justify-between gap-3 px-2 py-1.5 cursor-pointer hover:bg-accent rounded-sm"
-                        onClick={() => {
-                          setEnabledTools((prev) =>
-                            prev.includes(tool.id) ? prev.filter((id) => id !== tool.id) : [...prev, tool.id],
-                          )
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          {getToolIcon(tool.id)}
-                          <span className="text-sm">{tool.name}</span>
-                        </div>
-                        <Switch
-                          checked={enabledTools.includes(tool.id)}
-                          onCheckedChange={(checked) => {
-                            setEnabledTools((prev) =>
-                              checked ? [...prev, tool.id] : prev.filter((id) => id !== tool.id),
-                            )
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                          }}
-                        />
-                      </div>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-              {configQuery.data && model && (
-                <PromptInputModelSelect
-                  onValueChange={(value) => {
-                    setModel(value)
-                  }}
-                  value={model}
-                >
-                  <PromptInputModelSelectTrigger>
-                    <PromptInputModelSelectValue />
-                  </PromptInputModelSelectTrigger>
-                  <PromptInputModelSelectContent>
-                    {(configQuery.data as { models: { id: string; name: string }[] }).models.map((model) => (
-                      <PromptInputModelSelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </PromptInputModelSelectItem>
-                    ))}
-                  </PromptInputModelSelectContent>
-                </PromptInputModelSelect>
-              )}
-            </PromptInputTools>
+            {configQuery.data && agentId && (
+              <PromptInputModelSelect
+                onValueChange={(value) => {
+                  setAgentId(value)
+                }}
+                value={agentId}
+              >
+                <PromptInputModelSelectTrigger>
+                  <PromptInputModelSelectValue />
+                </PromptInputModelSelectTrigger>
+                <PromptInputModelSelectContent>
+                  {configQuery.data.agents.map((entry) => (
+                    <PromptInputModelSelectItem key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </PromptInputModelSelectItem>
+                  ))}
+                </PromptInputModelSelectContent>
+              </PromptInputModelSelect>
+            )}
             <PromptInputSubmit disabled={!input} status={status} />
           </PromptInputToolbar>
         </PromptInput>

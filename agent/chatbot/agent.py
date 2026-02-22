@@ -2,6 +2,7 @@ import pydantic_ai
 
 
 agent = pydantic_ai.Agent(
+    model='openai-responses:gpt-5-nano',
     instructions='You are an expert assistant.',
 )
 
