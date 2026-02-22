@@ -6,6 +6,10 @@ dependencies = [
     "fastapi>=0.117.1",
     "logfire[fastapi,starlette]>=4.9.0",
     "pydantic-ai-slim[anthropic,cli,google,openai]>=1.14.0",
+    "pydantic-settings>=2.13.1",
+    "redislite>=6.2.912183",
+    "sqlmodel>=0.0.37",
+    "taskiq-fastapi>=0.4.0",
     "uvicorn>=0.37.0",
 ]
 
