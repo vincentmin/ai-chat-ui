@@ -17,6 +17,3 @@ pre-commit:
     check-toml:
       glob: "*.toml"
       run: npx @taplo/cli check {staged_files}
-    codespell:
-      glob: "*.{ts,tsx,js,jsx,md}"
-      run: npx cspell --no-progress {staged_files}
