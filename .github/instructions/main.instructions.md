@@ -28,6 +28,8 @@ pnpm run format           # Format with Prettier
 pnpm run lefthook         # Run pre-commit hooks (includes typecheck, lint, ruff, ty-check)
 ```
 
+If you expect or encounter any linting or formatting issues, consider running `pnpm run lefthook` to automatically fix and check for issues. You don't have to linting/formatting hooks always though, as it is simple for your human to handle those themselves.
+
 ## Architecture
 
 ### Runtime Boundaries (Step 1)
