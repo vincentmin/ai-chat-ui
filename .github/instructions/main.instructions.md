@@ -6,6 +6,13 @@ applyTo: '**/*'
 
 A fullstack chatbot platform with a React frontend and a FastAPI backend. The frontend uses Vercel AI SDK (`useChat`) with AI Elements and shadcn UI components, while the backend owns conversation persistence, orchestrates long-running Pydantic AI agent runs through Taskiq workers, and streams AI SDK-compatible events to clients.
 
+## Philosophy
+
+- development experience is a priority: easy local setup without third party or docker services, hot reload, clear error messages, and minimal boilerplate
+- frontend focuses on rendering and interaction, while backend handles state management, persistence, and long-running execution
+- streaming architecture supports responsive UX and resilience to interruptions/client disconnects
+- clear separation of concerns and single ownership areas for each subsystem (frontend, API service, workers, database, broker) to improve maintainability and testability
+
 ## Development Commands
 
 ```bash
@@ -89,6 +96,7 @@ pnpm run format           # Format with Prettier
 ## Configuration
 
 - **TypeScript paths**: `@/*` maps to `./src/*`
+- **pydantic-settings**: Used for environment variable management in the backend
 
 ## Tech Stack
 
