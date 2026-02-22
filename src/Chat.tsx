@@ -2,6 +2,7 @@ import { Conversation, ConversationContent, ConversationScrollButton } from '@/c
 import { Loader } from '@/components/ai-elements/loader'
 import {
   PromptInput,
+  PromptInputButton,
   PromptInputModelSelect,
   PromptInputModelSelectContent,
   PromptInputModelSelectItem,
@@ -10,9 +11,24 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputToolbar,
+  PromptInputTools,
 } from '@/components/ai-elements/prompt-input'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useChat } from '@ai-sdk/react'
+import { SquarePenIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
@@ -22,38 +38,54 @@ import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 import type { ConversationEntry } from './types'
 
-interface AgentConfig {
+interface ModelConfig {
   id: string
   name: string
 }
 
 interface RemoteConfig {
-  agents: AgentConfig[]
+  models: ModelConfig[]
+  canOverrideSystemPrompt: boolean
+  defaultSystemPrompt: string | null
 }
 
-async function getAgents() {
+async function getConfig() {
   const res = await fetch('/api/configure')
   return (await res.json()) as RemoteConfig
 }
 
 const Chat = () => {
   const [input, setInput] = useState('')
-  const [agentId, setAgentId] = useState<string>('')
+  const [model, setModel] = useState<string>('')
+  const [systemPrompt, setSystemPrompt] = useState<string>('')
+  const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
+  const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
   const { messages, sendMessage, status, setMessages, regenerate, error } = useChat()
   const throttledMessages = useThrottle(messages, 500)
   const [conversationId, setConversationId] = useConversationIdFromUrl()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const configQuery = useQuery({
-    queryFn: getAgents,
-    queryKey: ['agents'],
+    queryFn: getConfig,
+    queryKey: ['chat-config'],
   })
 
   useEffect(() => {
-    if (configQuery.data?.agents[0]) {
-      setAgentId(configQuery.data.agents[0].id)
+    if (configQuery.data?.models[0]) {
+      setModel(configQuery.data.models[0].id)
+    }
+    if (configQuery.data?.canOverrideSystemPrompt) {
+      const defaultPrompt = configQuery.data.defaultSystemPrompt ?? ''
+      setSystemPrompt(defaultPrompt)
+      setSystemPromptDraft(defaultPrompt)
     }
   }, [configQuery.data])
+
+  useEffect(() => {
+    if (isPromptDialogOpen) {
+      setSystemPromptDraft(systemPrompt)
+    }
+  }, [isPromptDialogOpen, systemPrompt])
 
   useLayoutEffect(() => {
     if (conversationId === '/') {
@@ -86,7 +118,10 @@ const Chat = () => {
       sendMessage(
         { text: input },
         {
-          body: { agentId },
+          body: {
+            model,
+            systemPrompt: configQuery.data?.canOverrideSystemPrompt ? systemPrompt : undefined,
+          },
         },
       ).catch((error: unknown) => {
         console.error('Error sending message:', error)
@@ -164,25 +199,69 @@ const Chat = () => {
             autoFocus={true}
           />
           <PromptInputToolbar>
-            {configQuery.data && agentId && (
-              <PromptInputModelSelect
-                onValueChange={(value) => {
-                  setAgentId(value)
-                }}
-                value={agentId}
-              >
-                <PromptInputModelSelectTrigger>
-                  <PromptInputModelSelectValue />
-                </PromptInputModelSelectTrigger>
-                <PromptInputModelSelectContent>
-                  {configQuery.data.agents.map((entry) => (
-                    <PromptInputModelSelectItem key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </PromptInputModelSelectItem>
-                  ))}
-                </PromptInputModelSelectContent>
-              </PromptInputModelSelect>
-            )}
+            <PromptInputTools>
+              {configQuery.data?.canOverrideSystemPrompt && (
+                <Dialog open={isPromptDialogOpen} onOpenChange={setIsPromptDialogOpen}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DialogTrigger asChild>
+                        <PromptInputButton variant="outline" aria-label="Edit system prompt">
+                          <SquarePenIcon className="size-4" />
+                        </PromptInputButton>
+                      </DialogTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Edit system prompt</TooltipContent>
+                  </Tooltip>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>System Prompt</DialogTitle>
+                      <DialogDescription>Changes apply to new messages in this chat session.</DialogDescription>
+                    </DialogHeader>
+                    <Textarea
+                      value={systemPromptDraft}
+                      onChange={(e) => {
+                        setSystemPromptDraft(e.target.value)
+                      }}
+                      placeholder="Override system prompt"
+                      className="min-h-36"
+                    />
+                    <DialogFooter>
+                      <DialogClose asChild>
+                        <Button variant="outline">Cancel</Button>
+                      </DialogClose>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setSystemPrompt(systemPromptDraft)
+                          setIsPromptDialogOpen(false)
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+              {configQuery.data && model && (
+                <PromptInputModelSelect
+                  onValueChange={(value) => {
+                    setModel(value)
+                  }}
+                  value={model}
+                >
+                  <PromptInputModelSelectTrigger>
+                    <PromptInputModelSelectValue />
+                  </PromptInputModelSelectTrigger>
+                  <PromptInputModelSelectContent>
+                    {configQuery.data.models.map((entry) => (
+                      <PromptInputModelSelectItem key={entry.id} value={entry.id}>
+                        {entry.name}
+                      </PromptInputModelSelectItem>
+                    ))}
+                  </PromptInputModelSelectContent>
+                </PromptInputModelSelect>
+              )}
+            </PromptInputTools>
             <PromptInputSubmit disabled={!input} status={status} />
           </PromptInputToolbar>
         </PromptInput>

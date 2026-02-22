@@ -1,60 +1,93 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
-from typing import TypeVar
+from collections.abc import Mapping
+from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
+from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-AgentDepsT = TypeVar('AgentDepsT')
-OutputDataT = TypeVar('OutputDataT')
+ModelsParam = Mapping[str, Model | KnownModelName | str]
 
 
-@dataclass(frozen=True)
-class AgentDefinition:
-    name: str
-    agent: Agent[AgentDepsT, OutputDataT]
-
-
-class AgentInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
+class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     id: str
     name: str
 
 
 class ConfigureFrontend(BaseModel, alias_generator=to_camel, populate_by_name=True):
-    agents: list[AgentInfo]
+    models: list[ModelInfo]
+    can_override_system_prompt: bool
+    default_system_prompt: str | None
 
 
 class ChatRequestExtra(
-    BaseModel, extra='ignore', alias_generator=to_camel, populate_by_name=True
+    BaseModel,
+    extra='ignore',
+    alias_generator=to_camel,
+    populate_by_name=True,
 ):
-    agent_id: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
 
 
-def validate_request_options(
-    extra_data: ChatRequestExtra, agent_ids: set[str]
-) -> str | None:
-    if extra_data.agent_id and extra_data.agent_id not in agent_ids:
-        return f'Agent "{extra_data.agent_id}" is not in the allowed agents list'
-    return None
+def _string_instructions_or_none(agent: Agent[Any, Any]) -> list[str] | None:
+    instructions = getattr(agent, '_instructions', None)
+    if not isinstance(instructions, list):
+        return None
+    if any(not isinstance(value, str) for value in instructions):
+        return None
+    return instructions
 
 
-def create_chat_router[AgentDepsT, OutputDataT](
+def _build_model_options(
+    agent: Agent[Any, Any],
+    models: ModelsParam,
+) -> tuple[dict[str, Model | str], list[ModelInfo]]:
+    model_id_to_ref: dict[str, Model | str] = {}
+    model_infos: list[ModelInfo] = []
+
+    seen_model_keys: set[tuple[str, str]] = set()
+
+    def add_model(label: str | None, model_ref: Model | str | KnownModelName) -> None:
+        model = infer_model(model_ref)
+        model_key = (model.system, model.model_name)
+        model_id = f'{model.system}:{model.model_name}'
+
+        if model_key in seen_model_keys:
+            return
+        seen_model_keys.add(model_key)
+
+        model_id_to_ref[model_id] = model_ref
+        model_infos.append(ModelInfo(id=model_id, name=label or model.label))
+
+    if agent.model is not None:
+        add_model(None, agent.model)
+
+    for label, model_ref in models.items():
+        add_model(label, model_ref)
+
+    return model_id_to_ref, model_infos
+
+
+def create_chat_router(
     *,
-    agents: dict[str, Agent[AgentDepsT, OutputDataT]],
+    agent: Agent[Any, Any],
+    models: ModelsParam,
 ) -> APIRouter:
-    if not agents:
-        raise ValueError('At least one agent must be configured')
+    model_id_to_ref, model_infos = _build_model_options(agent, models)
+    model_ids = set(model_id_to_ref.keys())
 
-    agent_infos = [
-        AgentInfo(id=agent_id, name=to_camel(agent_id)) for agent_id in agents
-    ]
-    agent_ids = set(agents.keys())
-    default_agent_id = next(iter(agents))
+    string_instructions = _string_instructions_or_none(agent)
+    can_override_system_prompt = string_instructions is not None
+    default_system_prompt = (
+        '\n\n'.join(string_instructions) if string_instructions else None
+    )
+
     router = APIRouter()
 
     @router.options('/chat')
@@ -63,7 +96,11 @@ def create_chat_router[AgentDepsT, OutputDataT](
 
     @router.get('/configure')
     async def configure_frontend() -> JSONResponse:
-        config = ConfigureFrontend(agents=agent_infos)
+        config = ConfigureFrontend(
+            models=model_infos,
+            can_override_system_prompt=can_override_system_prompt,
+            default_system_prompt=default_system_prompt,
+        )
         return JSONResponse(config.model_dump(by_alias=True))
 
     @router.get('/health')
@@ -85,23 +122,38 @@ def create_chat_router[AgentDepsT, OutputDataT](
 
     @router.post('/chat')
     async def post_chat(request: Request) -> Response:
-        default_agent = agents[default_agent_id]
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=default_agent
+        adapter = await VercelAIAdapter[Any, Any].from_request(
+            request,
+            agent=agent,
         )
         extra_data = ChatRequestExtra.model_validate(
             adapter.run_input.__pydantic_extra__
         )
 
-        if error := validate_request_options(extra_data, agent_ids):
-            return JSONResponse({'error': error}, status_code=400)
+        if extra_data.model and extra_data.model not in model_ids:
+            return JSONResponse(
+                {
+                    'error': (
+                        f'Model "{extra_data.model}" is not in the allowed models list'
+                    )
+                },
+                status_code=400,
+            )
 
-        selected_agent_id = extra_data.agent_id or default_agent_id
-        selected_agent = agents[selected_agent_id]
+        if extra_data.system_prompt and not can_override_system_prompt:
+            return JSONResponse(
+                {'error': 'System prompt override is not available for this agent'},
+                status_code=400,
+            )
 
-        return await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
-            request,
-            agent=selected_agent,
+        model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
+        instructions = extra_data.system_prompt if can_override_system_prompt else None
+
+        return adapter.streaming_response(
+            adapter.run_stream(
+                model=model_ref,
+                instructions=instructions,
+            )
         )
 
     return router

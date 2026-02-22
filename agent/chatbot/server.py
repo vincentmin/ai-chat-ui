@@ -15,8 +15,8 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
 settings = get_settings()
-
-if not settings.has_any_model_key():
+models = settings.available_models()
+if not models:
     raise ValueError(
         'No models configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or '
         'GOOGLE_API_KEY environment variable.'
@@ -35,15 +35,11 @@ async def lifespan(app: FastAPI):
         redis_runtime.shutdown()
 
 
-agents = {
-    'assistant': agent,
-    'assistant2': agent,
-}
-
 app = FastAPI(title='AI Chat API', lifespan=lifespan)
 app.include_router(
     create_chat_router(
-        agents=agents,
+        agent=agent,
+        models=models,
     ),
     prefix='/api',
 )

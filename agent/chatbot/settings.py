@@ -6,6 +6,7 @@ from pathlib import Path
 
 import redislite
 from pydantic import Field, computed_field, model_validator
+from pydantic_ai.models import KnownModelName
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,10 +44,22 @@ class AppSettings(BaseSettings):
             )
         return self
 
+    def available_models(self) -> dict[str, KnownModelName | str]:
+        models: dict[str, KnownModelName | str] = {}
+
+        if self.anthropic_api_key:
+            models['Claude Sonnet 4.5'] = 'anthropic:claude-haiku-4-5'
+        if self.openai_api_key:
+            models['GPT 5 Nano'] = 'openai-responses:gpt-5-nano'
+            models['GPT 5 Mini'] = 'openai-responses:gpt-5-mini'
+            models['GPT 5'] = 'openai-responses:gpt-5'
+        if self.google_api_key:
+            models['Gemini 2.5 Pro'] = 'google-gla:gemini-3-flash-preview'
+
+        return models
+
     def has_any_model_key(self) -> bool:
-        return bool(
-            self.openai_api_key or self.anthropic_api_key or self.google_api_key
-        )
+        return bool(self.available_models())
 
 
 class RedisRuntime:
