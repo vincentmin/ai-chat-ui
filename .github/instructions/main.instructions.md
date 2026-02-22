@@ -29,6 +29,36 @@ pnpm run format           # Format with Prettier
 
 ## Architecture
 
+### Runtime Boundaries (Step 1)
+
+- **Frontend (React + AI SDK UI)**
+  - Owns presentation, interaction state, and request initiation only.
+  - Must not be the source of truth for persisted conversation history.
+  - Renders backend-provided messages and stream events, including reconnect/resume UX.
+- **API Service (FastAPI)**
+  - Owns HTTP contract, auth/session validation, chat lifecycle orchestration, and SSE relay.
+  - Persists and reads canonical chat state via database services.
+  - Triggers or resumes worker execution; does not run long agent workloads inline with request threads.
+- **Worker Service (Taskiq)**
+  - Owns long-running Pydantic AI execution and tool orchestration.
+  - Reads required conversation context from persistence and emits ordered agent events.
+  - Must be idempotent and safe to resume/retry for the same chat/run identifiers.
+- **Broker/Stream Transport**
+  - Owns decoupled delivery between API and worker runtimes.
+  - In development: InMemoryBroker for queueing semantics with minimal setup.
+  - In production: Redis for broker + stream transport and resumable event consumption.
+- **Database (SQLModel-backed)**
+  - Owns durable chat state, message parts, run metadata, and processing status.
+  - SQLite is the local development default; PostgreSQL is the production default.
+
+### Cross-Boundary Contracts
+
+- Frontend communicates with backend only through `/api/configure`, `POST /api/chat/{id}`, and `GET /api/chat/{id}/stream`.
+- API-to-worker handoff is asynchronous through Taskiq; API should treat worker processing as external to request lifetime.
+- Worker-to-API event handoff uses ordered stream events adapted to AI SDK-compatible payloads.
+- API remains the only HTTP surface; workers and broker are internal infrastructure components.
+- Persistence writes are backend-owned; frontend never mutates canonical history directly.
+
 ### Frontend Structure
 
 - **src/Chat.tsx**: Main chat component handling message sending, streaming UX, and conversation lifecycle with backend-managed history
