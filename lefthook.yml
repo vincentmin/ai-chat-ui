@@ -11,6 +11,16 @@ pre-commit:
     typecheck:
       glob: "*.{ts,tsx}"
       run: pnpm run typecheck
+    ruff-check:
+      glob: "*.{py,pyi}"
+      run: uv run --project=agent ruff check --fix {staged_files}
+    ruff-format:
+      glob: "*.{py,pyi}"
+      run: uv run --project=agent ruff format {staged_files}
+      stage_fixed: true
+    ty-check:
+      glob: "*.{py,pyi}"
+      run: uv run --project=agent ty check {staged_files}
     check-yaml:
       glob: "*.{yaml,yml}"
       run: npx yaml-lint {staged_files}

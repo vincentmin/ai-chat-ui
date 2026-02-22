@@ -18,6 +18,37 @@ dependencies = [
 docstring-code-format = false
 quote-style = "single"
 
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # Ruff-specific rules
+]
+ignore = [
+    "B008", # FastAPI dependency patterns commonly use call defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ty.src]
+include = [
+    "chatbot",
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.terminal]
+output-format = "concise"
+
 [dependency-groups]
 dev = [
     "ruff>=0.15.2",

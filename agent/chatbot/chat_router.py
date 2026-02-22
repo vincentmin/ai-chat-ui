@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -44,7 +43,7 @@ def validate_request_options(
     return None
 
 
-def create_chat_router(
+def create_chat_router[AgentDepsT, OutputDataT](
     *,
     agents: dict[str, Agent[AgentDepsT, OutputDataT]],
 ) -> APIRouter:

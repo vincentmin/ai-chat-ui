@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 import os
 
-from fastapi import FastAPI
 import logfire
+from fastapi import FastAPI
 
 from .agent import agent
 from .chat_router import create_chat_router
 
-# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't
+# have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
@@ -18,7 +19,8 @@ if not (
     or os.getenv('GOOGLE_API_KEY')
 ):
     raise ValueError(
-        'No models configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY environment variable.'
+        'No models configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or '
+        'GOOGLE_API_KEY environment variable.'
     )
 
 agents = {
