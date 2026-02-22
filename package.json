@@ -21,7 +21,8 @@
     "dev": "BACKEND_PORT=38001 vite",
     "dev:server": "cd agent && uv run --env-file=../.env.local uvicorn chatbot.server:app --port 38001",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lefthook": "npx lefthook run pre-commit --all-files"
   },
   "files": [
     "dist"

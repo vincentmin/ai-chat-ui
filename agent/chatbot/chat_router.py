@@ -67,8 +67,21 @@ def create_chat_router[AgentDepsT, OutputDataT](
         return JSONResponse(config.model_dump(by_alias=True))
 
     @router.get('/health')
-    async def health() -> JSONResponse:
-        return JSONResponse({'ok': True})
+    async def health(request: Request) -> JSONResponse:
+        settings = getattr(request.app.state, 'settings', None)
+        redis_runtime = getattr(request.app.state, 'redis_runtime', None)
+        return JSONResponse(
+            {
+                'ok': True,
+                'profile': str(getattr(settings, 'profile', 'unknown')),
+                'redisBackend': (
+                    'redislite'
+                    if getattr(redis_runtime, 'redislite_client', None)
+                    else 'redis'
+                ),
+                'redisUrl': getattr(redis_runtime, 'redis_url', None),
+            }
+        )
 
     @router.post('/chat')
     async def post_chat(request: Request) -> Response:

@@ -25,6 +25,7 @@ pnpm run typecheck        # Type check without emitting
 pnpm run lint             # Run ESLint
 pnpm run lint-fix         # Fix ESLint issues
 pnpm run format           # Format with Prettier
+pnpm run lefthook         # Run pre-commit hooks (includes typecheck, lint, ruff, ty-check)
 ```
 
 ## Architecture
@@ -58,6 +59,17 @@ pnpm run format           # Format with Prettier
 - Worker-to-API event handoff uses ordered stream events adapted to AI SDK-compatible payloads.
 - API remains the only HTTP surface; workers and broker are internal infrastructure components.
 - Persistence writes are backend-owned; frontend never mutates canonical history directly.
+
+### Environment Profiles (Step 2)
+
+- Use `pydantic-settings` as the single source of configuration loading and profile inference.
+- Profiles:
+  - `development`: default when no production-only environment markers are present.
+  - `production`: inferred when `REDIS_URL` is provided or when `APP_ENV=production` is explicitly set.
+- Redis transport:
+  - `production` requires `REDIS_URL` and must connect to managed Redis.
+  - `development` uses in-process `redislite` and derives a runtime Redis URL from its unix socket.
+- Keep environment-sensitive infrastructure decisions (database URL, broker backend, stream transport) in backend settings modules, not in frontend code.
 
 ### Frontend Structure
 
