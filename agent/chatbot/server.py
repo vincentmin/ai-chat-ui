@@ -1,5 +1,8 @@
 from __future__ import annotations as _annotations
+
 import os
+
+from fastapi import FastAPI
 import logfire
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
@@ -8,6 +11,7 @@ from pydantic_ai.builtin_tools import (
 )
 
 from .agent import agent
+from .chat_router import create_chat_router
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -29,12 +33,17 @@ if not models:
         'No models configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY environment variable.'
     )
 
-app = agent.to_web(
-    models=models,
-    builtin_tools=[
-        WebSearchTool(),
-        CodeExecutionTool(),
-        ImageGenerationTool(),
-    ],
+app = FastAPI(title='AI Chat API')
+app.include_router(
+    create_chat_router(
+        agent=agent,
+        models=models,
+        builtin_tools=[
+            WebSearchTool(),
+            CodeExecutionTool(),
+            ImageGenerationTool(),
+        ],
+    ),
+    prefix='/api',
 )
-logfire.instrument_starlette(app)
+logfire.instrument_fastapi(app)
