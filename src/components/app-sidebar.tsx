@@ -31,22 +31,55 @@ import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
 import logoSvg from '../assets/logo.svg'
 
+function normalizeConversationId(rawId: string): string {
+  if (rawId.startsWith('/chat/')) {
+    return rawId.slice('/chat/'.length)
+  }
+  if (rawId.startsWith('/')) {
+    return rawId.slice(1)
+  }
+  return rawId
+}
+
 function useConversations(): ConversationEntry[] {
   const [conversations, setConversations] = useState<ConversationEntry[]>(() => {
     const stored = window.localStorage.getItem('conversationIds')
-    return stored ? (JSON.parse(stored) as ConversationEntry[]) : []
+    if (!stored) {
+      return []
+    }
+    const parsed = JSON.parse(stored) as ConversationEntry[]
+    return parsed.map((conversation) => ({
+      ...conversation,
+      id: normalizeConversationId(conversation.id),
+    }))
   })
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'conversationIds' && e.newValue) {
-        setConversations(JSON.parse(e.newValue) as ConversationEntry[])
+        const parsed = JSON.parse(e.newValue) as ConversationEntry[]
+        setConversations(
+          parsed.map((conversation) => ({
+            ...conversation,
+            id: normalizeConversationId(conversation.id),
+          })),
+        )
       }
     }
 
     const handleCustomStorageChange = () => {
       const stored = window.localStorage.getItem('conversationIds')
-      setConversations(stored ? (JSON.parse(stored) as ConversationEntry[]) : [])
+      if (!stored) {
+        setConversations([])
+        return
+      }
+      const parsed = JSON.parse(stored) as ConversationEntry[]
+      setConversations(
+        parsed.map((conversation) => ({
+          ...conversation,
+          id: normalizeConversationId(conversation.id),
+        })),
+      )
     }
 
     window.addEventListener('storage', handleStorageChange)
@@ -85,11 +118,9 @@ function deleteConversation(conversationId: string) {
   }
 
   // Remove the conversation's messages
-  window.localStorage.removeItem(conversationId)
-
   // If the deleted conversation was active, navigate to home
   const currentPath = window.location.pathname
-  if (currentPath === conversationId) {
+  if (currentPath === `/chat/${conversationId}`) {
     window.history.pushState({}, '', '/')
     window.dispatchEvent(new Event('history-state-changed'))
   }
@@ -150,7 +181,7 @@ export function AppSidebar() {
                     <div className="flex items-center gap-1 h-auto">
                       <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
                         <a
-                          href={conversation.id}
+                          href={`/chat/${conversation.id}`}
                           onClick={doLocalNavigation}
                           className={cn('h-auto flex items-start gap-2', {
                             'bg-accent pointer-events-none': conversation.id === conversationId,

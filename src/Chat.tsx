@@ -28,12 +28,11 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useChat } from '@ai-sdk/react'
+import { DefaultChatTransport, type UIMessage } from 'ai'
 import { SquarePenIcon } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
-import { useThrottle } from '@uidotdev/usehooks'
-import { nanoid } from 'nanoid'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 import type { ConversationEntry } from './types'
@@ -49,9 +48,35 @@ interface RemoteConfig {
   defaultSystemPrompt: string | null
 }
 
+interface CreateConversationResponse {
+  id: string
+}
+
+interface ChatHistoryResponse {
+  messages: UIMessage[]
+}
+
 async function getConfig() {
   const res = await fetch('/api/configure')
   return (await res.json()) as RemoteConfig
+}
+
+async function createConversation() {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error('Failed to create conversation')
+  }
+  return (await res.json()) as CreateConversationResponse
+}
+
+async function getConversationMessages(conversationId: string) {
+  const res = await fetch(`/api/chat/${conversationId}`)
+  if (!res.ok) {
+    throw new Error('Failed to load conversation')
+  }
+  return (await res.json()) as ChatHistoryResponse
 }
 
 const Chat = () => {
@@ -60,9 +85,14 @@ const Chat = () => {
   const [systemPrompt, setSystemPrompt] = useState<string>('')
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
-  const { messages, sendMessage, status, setMessages, regenerate, error } = useChat()
-  const throttledMessages = useThrottle(messages, 500)
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [conversationId, setConversationId] = useConversationIdFromUrl()
+  const chatApi = conversationId ? `/api/chat/${conversationId}` : '/api/chat/__pending__'
+  const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
+  const { messages, sendMessage, status, setMessages, regenerate, error } = useChat({
+    id: conversationId ?? undefined,
+    transport,
+  })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const configQuery = useQuery({
@@ -87,63 +117,88 @@ const Chat = () => {
     }
   }, [isPromptDialogOpen, systemPrompt])
 
-  useLayoutEffect(() => {
-    if (conversationId === '/') {
-      setMessages([])
-    } else {
-      const localStorageMessages = window.localStorage.getItem(conversationId)
-      if (localStorageMessages) {
-        setMessages(JSON.parse(localStorageMessages) as typeof messages)
+  useEffect(() => {
+    let disposed = false
+
+    async function loadConversation() {
+      if (!conversationId) {
+        setMessages([])
+        return
+      }
+
+      try {
+        const response = await getConversationMessages(conversationId)
+        if (!disposed) {
+          setMessages(response.messages)
+        }
+      } catch (error: unknown) {
+        console.error('Error loading conversation:', error)
+        if (!disposed) {
+          setMessages([])
+        }
       }
     }
+
+    loadConversation().catch((error: unknown) => {
+      console.error('Error loading conversation:', error)
+    })
     textareaRef.current?.focus()
-  }, [conversationId])
+
+    return () => {
+      disposed = true
+    }
+  }, [conversationId, setMessages])
+
+  const sendTextMessage = (text: string) => {
+    sendMessage(
+      { text },
+      {
+        body: {
+          model,
+          systemPrompt: configQuery.data?.canOverrideSystemPrompt ? systemPrompt : undefined,
+        },
+      },
+    ).catch((error: unknown) => {
+      console.error('Error sending message:', error)
+    })
+  }
+
+  useEffect(() => {
+    if (!conversationId || !pendingMessage) {
+      return
+    }
+
+    sendTextMessage(pendingMessage)
+    setPendingMessage(null)
+  }, [conversationId, pendingMessage, model, systemPrompt, configQuery.data])
 
   const handleSubmit = (e: SyntheticEvent) => {
     e.preventDefault()
     if (input.trim()) {
-      const theCurrentUrl = new URL(window.location.toString())
+      const submittedText = input
+      setInput('')
 
-      // we're starting a new conversation
-      if (theCurrentUrl.pathname === '/') {
-        const newConversationId = `/${nanoid()}`
-        setConversationId(newConversationId)
-
-        saveConversationEntryInLocalStorage(newConversationId, input)
-
-        theCurrentUrl.pathname = newConversationId
-        window.history.pushState({}, '', theCurrentUrl.toString())
+      if (!conversationId) {
+        createConversation()
+          .then((response) => {
+            saveConversationEntryInLocalStorage(response.id, submittedText)
+            setConversationId(response.id)
+            setPendingMessage(submittedText)
+          })
+          .catch((error: unknown) => {
+            console.error('Error creating conversation:', error)
+          })
+        return
       }
 
-      sendMessage(
-        { text: input },
-        {
-          body: {
-            model,
-            systemPrompt: configQuery.data?.canOverrideSystemPrompt ? systemPrompt : undefined,
-          },
-        },
-      ).catch((error: unknown) => {
-        console.error('Error sending message:', error)
-      })
-      setInput('')
+      sendTextMessage(submittedText)
     }
   }
-
-  useEffect(() => {
-    if (conversationId && throttledMessages.length > 0) {
-      window.localStorage.setItem(conversationId, JSON.stringify(throttledMessages))
-    }
-  }, [throttledMessages, conversationId])
 
   function regen(messageId: string) {
     regenerate({ messageId }).catch((error: unknown) => {
       console.error('Error regenerating message:', error)
     })
-  }
-
-  if (conversationId !== '/' && messages.length === 0) {
-    return null
   }
 
   return (
@@ -274,19 +329,20 @@ export default Chat
 
 const MAX_FIRST_MESSAGE_LENGTH = 30
 
-function saveConversationEntryInLocalStorage(newConversationId: string, firstMessage: string) {
+function saveConversationEntryInLocalStorage(conversationId: string, firstMessage: string) {
   const currentConversations = window.localStorage.getItem('conversationIds') ?? '[]'
   const conversationIds = JSON.parse(currentConversations) as ConversationEntry[]
   const trimmedFirstMessage =
     firstMessage.length > MAX_FIRST_MESSAGE_LENGTH
       ? firstMessage.slice(0, MAX_FIRST_MESSAGE_LENGTH) + '...'
       : firstMessage
+
   conversationIds.unshift({
-    id: newConversationId,
+    id: conversationId,
     firstMessage: trimmedFirstMessage,
     timestamp: Date.now(),
   })
+
   window.localStorage.setItem('conversationIds', JSON.stringify(conversationIds))
-  // dispatch a custom event so that the sidebar can update
   window.dispatchEvent(new Event('local-storage-change'))
 }

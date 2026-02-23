@@ -6,15 +6,19 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from sqlmodel import select
 
 from .db import AgentRunSnapshot, to_json_snapshot
+from .db.json_types import JsonValue
 from .db.runtime import DatabaseRuntime
 
 logger = logging.getLogger(__name__)
@@ -41,27 +45,56 @@ class ChatRequestExtra(
 ):
     model: str | None = None
     system_prompt: str | None = None
-    conversation_id: str | None = None
     agent_key: str | None = None
 
 
-def _conversation_id_from_result(
-    result: AgentRunResult[Any],
-    requested_conversation_id: str | None,
-) -> str:
-    if requested_conversation_id:
-        return requested_conversation_id
+class CreateConversationResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    id: str
 
-    metadata = result.metadata
-    if isinstance(metadata, dict):
-        maybe_conversation_id = metadata.get('conversation_id')
-        if isinstance(maybe_conversation_id, str) and maybe_conversation_id:
-            return maybe_conversation_id
 
-    if result.run_id:
-        return result.run_id
+def _messages_from_snapshot(snapshot_json: JsonValue) -> list[ModelMessage]:
+    if not isinstance(snapshot_json, dict):
+        return []
 
-    return str(uuid4())
+    state = snapshot_json.get('_state')
+    if not isinstance(state, dict):
+        return []
+
+    message_history = state.get('message_history')
+    if not isinstance(message_history, list):
+        return []
+
+    try:
+        return ModelMessagesTypeAdapter.validate_python(message_history)
+    except Exception:
+        logger.exception('Failed to deserialize message_history from snapshot')
+        return []
+
+
+def _latest_model_messages(
+    db_runtime: DatabaseRuntime,
+    conversation_id: str,
+) -> list[ModelMessage]:
+    with db_runtime.session() as session:
+        statement = select(AgentRunSnapshot).where(
+            AgentRunSnapshot.conversation_id == conversation_id
+        )
+        snapshots = session.exec(statement).all()
+
+    latest_snapshot = max(
+        snapshots,
+        key=lambda snapshot: snapshot.created_at,
+        default=None,
+    )
+
+    if latest_snapshot is None:
+        return []
+
+    return _messages_from_snapshot(latest_snapshot.agent_run_result_json)
 
 
 def _string_instructions_or_none(agent: Agent[Any, Any]) -> list[str] | None:
@@ -123,6 +156,15 @@ def create_chat_router(
     async def options_chat() -> Response:
         return Response()
 
+    @router.options('/chat/{conversation_id}')
+    async def options_chat_with_id() -> Response:
+        return Response()
+
+    @router.post('/chat')
+    async def create_conversation() -> JSONResponse:
+        payload = CreateConversationResponse(id=str(uuid4()))
+        return JSONResponse(payload.model_dump(by_alias=True))
+
     @router.get('/configure')
     async def configure_frontend() -> JSONResponse:
         config = ConfigureFrontend(
@@ -149,8 +191,8 @@ def create_chat_router(
             }
         )
 
-    @router.post('/chat')
-    async def post_chat(request: Request) -> Response:
+    @router.post('/chat/{conversation_id}')
+    async def post_chat(request: Request, conversation_id: str) -> Response:
         adapter = await VercelAIAdapter[Any, Any].from_request(
             request,
             agent=agent,
@@ -179,6 +221,13 @@ def create_chat_router(
         instructions = extra_data.system_prompt if can_override_system_prompt else None
 
         db_runtime = getattr(request.app.state, 'db_runtime', None)
+        if not isinstance(db_runtime, DatabaseRuntime):
+            logger.warning(
+                'db_runtime is not available; run will continue without persistence'
+            )
+            message_history: list[ModelMessage] = []
+        else:
+            message_history = _latest_model_messages(db_runtime, conversation_id)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:
             if not isinstance(db_runtime, DatabaseRuntime):
@@ -187,10 +236,6 @@ def create_chat_router(
                 )
                 return
 
-            conversation_id = _conversation_id_from_result(
-                result,
-                extra_data.conversation_id,
-            )
             agent_key = (
                 extra_data.agent_key or getattr(agent, 'name', None) or 'default'
             )
@@ -211,10 +256,21 @@ def create_chat_router(
 
         return adapter.streaming_response(
             adapter.run_stream(
+                message_history=message_history,
                 model=model_ref,
                 instructions=instructions,
                 on_complete=on_complete,
             )
         )
+
+    @router.get('/chat/{conversation_id}')
+    async def get_chat(conversation_id: str, request: Request) -> JSONResponse:
+        db_runtime = getattr(request.app.state, 'db_runtime', None)
+        if not isinstance(db_runtime, DatabaseRuntime):
+            return JSONResponse({'messages': []})
+
+        model_messages = _latest_model_messages(db_runtime, conversation_id)
+        ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
+        return JSONResponse({'messages': jsonable_encoder(ui_messages)})
 
     return router
