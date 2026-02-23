@@ -91,6 +91,11 @@ const Chat = () => {
   const { messages, sendMessage, status, setMessages, regenerate, error } = useChat({
     id: conversationId ?? undefined,
     transport,
+    onFinish: ({ isAbort, isDisconnect, isError }) => {
+      if (conversationId && !isAbort && !isDisconnect && !isError) {
+        window.dispatchEvent(new Event('conversations-changed'))
+      }
+    },
   })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
