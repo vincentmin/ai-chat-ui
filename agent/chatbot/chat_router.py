@@ -22,7 +22,7 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from sqlmodel import select
 
-from .db import AgentRunSnapshot, to_json_snapshot
+from .db import AgentRunSnapshot, to_json_value
 from .db.json_types import JsonValue
 from .db.runtime import DatabaseRuntime
 
@@ -79,22 +79,14 @@ class ConversationsResponse(
     conversations: list[ConversationSummary]
 
 
-def _messages_from_snapshot(snapshot_json: JsonValue) -> list[ModelMessage]:
-    if not isinstance(snapshot_json, dict):
-        return []
-
-    state = snapshot_json.get('_state')
-    if not isinstance(state, dict):
-        return []
-
-    message_history = state.get('message_history')
-    if not isinstance(message_history, list):
+def _messages_from_json(messages_json: JsonValue) -> list[ModelMessage]:
+    if not isinstance(messages_json, list):
         return []
 
     try:
-        return ModelMessagesTypeAdapter.validate_python(message_history)
+        return ModelMessagesTypeAdapter.validate_python(messages_json)
     except Exception:
-        logger.exception('Failed to deserialize message_history from snapshot')
+        logger.exception('Failed to deserialize model messages')
         return []
 
 
@@ -117,7 +109,7 @@ def _latest_model_messages(
     if latest_snapshot is None:
         return []
 
-    return _messages_from_snapshot(latest_snapshot.agent_run_result_json)
+    return _messages_from_json(latest_snapshot.model_messages_json)
 
 
 def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
@@ -284,7 +276,7 @@ def create_chat_router(
                             conversation_id=conversation_id,
                             run_id=result.run_id,
                             agent_key=agent_key,
-                            agent_run_result_json=to_json_snapshot(result),
+                            model_messages_json=to_json_value(result.all_messages()),
                         )
                     )
                     session.commit()
@@ -327,7 +319,7 @@ def create_chat_router(
 
         summaries: list[ConversationSummary] = []
         for conversation_id, snapshot in latest_by_conversation.items():
-            messages = _messages_from_snapshot(snapshot.agent_run_result_json)
+            messages = _messages_from_json(snapshot.model_messages_json)
             first_message = _first_user_message_text(messages)
             summaries.append(
                 ConversationSummary(

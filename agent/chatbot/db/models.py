@@ -32,8 +32,8 @@ class AgentRunSnapshot(SQLModel, table=True):
         default='default',
         sa_column=Column(String(200), nullable=False, index=True),
     )
-    # Stores the complete AgentRunResult payload, including `_state`.
-    agent_run_result_json: JsonValue = Field(
+    # Stores run model messages from AgentRunResult.all_messages().
+    model_messages_json: JsonValue = Field(
         sa_column=Column(JSON_SQL_TYPE, nullable=False),
     )
     created_at: datetime = Field(default_factory=utc_now, nullable=False, index=True)

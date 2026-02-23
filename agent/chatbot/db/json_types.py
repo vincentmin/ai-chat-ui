@@ -18,10 +18,3 @@ _any_adapter = TypeAdapter(Any)
 def to_json_value(value: Any) -> JsonValue:
     """Convert any Python object to a JSON-compatible value."""
     return cast(JsonValue, _any_adapter.dump_python(value, mode='json'))
-
-
-def to_json_snapshot(value: Any) -> JsonValue:
-    """Serialize from __dict__ when available to preserve `_state` and peers."""
-    if hasattr(value, '__dict__'):
-        return to_json_value(vars(value))
-    return to_json_value(value)
