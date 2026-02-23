@@ -2,6 +2,7 @@ import { CirclePlus, MessageCircle, Trash } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -31,68 +32,16 @@ import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
 import logoSvg from '../assets/logo.svg'
 
-function normalizeConversationId(rawId: string): string {
-  if (rawId.startsWith('/chat/')) {
-    return rawId.slice('/chat/'.length)
-  }
-  if (rawId.startsWith('/')) {
-    return rawId.slice(1)
-  }
-  return rawId
+interface ConversationsResponse {
+  conversations: ConversationEntry[]
 }
 
-function useConversations(): ConversationEntry[] {
-  const [conversations, setConversations] = useState<ConversationEntry[]>(() => {
-    const stored = window.localStorage.getItem('conversationIds')
-    if (!stored) {
-      return []
-    }
-    const parsed = JSON.parse(stored) as ConversationEntry[]
-    return parsed.map((conversation) => ({
-      ...conversation,
-      id: normalizeConversationId(conversation.id),
-    }))
-  })
-
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'conversationIds' && e.newValue) {
-        const parsed = JSON.parse(e.newValue) as ConversationEntry[]
-        setConversations(
-          parsed.map((conversation) => ({
-            ...conversation,
-            id: normalizeConversationId(conversation.id),
-          })),
-        )
-      }
-    }
-
-    const handleCustomStorageChange = () => {
-      const stored = window.localStorage.getItem('conversationIds')
-      if (!stored) {
-        setConversations([])
-        return
-      }
-      const parsed = JSON.parse(stored) as ConversationEntry[]
-      setConversations(
-        parsed.map((conversation) => ({
-          ...conversation,
-          id: normalizeConversationId(conversation.id),
-        })),
-      )
-    }
-
-    window.addEventListener('storage', handleStorageChange)
-    // a custom event to handle same-tab updates
-    window.addEventListener('local-storage-change', handleCustomStorageChange)
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange)
-      window.removeEventListener('local-storage-change', handleCustomStorageChange)
-    }
-  }, [])
-
-  return conversations
+async function fetchConversations() {
+  const res = await fetch('/api/chats')
+  if (!res.ok) {
+    throw new Error('Failed to fetch conversations')
+  }
+  return (await res.json()) as ConversationsResponse
 }
 
 function doLocalNavigation(e: React.MouseEvent) {
@@ -106,31 +55,36 @@ function doLocalNavigation(e: React.MouseEvent) {
   e.preventDefault()
 }
 
-function deleteConversation(conversationId: string) {
-  // Remove from conversationIds list
-  const stored = window.localStorage.getItem('conversationIds')
-  if (stored) {
-    const conversations = JSON.parse(stored) as ConversationEntry[]
-    const updated = conversations.filter((conv) => conv.id !== conversationId)
-    window.localStorage.setItem('conversationIds', JSON.stringify(updated))
-    // Dispatch event to notify other components
-    window.dispatchEvent(new Event('local-storage-change'))
-  }
-
-  // Remove the conversation's messages
-  // If the deleted conversation was active, navigate to home
-  const currentPath = window.location.pathname
-  if (currentPath === `/chat/${conversationId}`) {
-    window.history.pushState({}, '', '/')
-    window.dispatchEvent(new Event('history-state-changed'))
+async function deleteConversation(conversationId: string) {
+  const res = await fetch(`/api/chat/${conversationId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    throw new Error('Failed to delete conversation')
   }
 }
 
 export function AppSidebar() {
-  const conversations = useConversations()
+  const [refreshTick, setRefreshTick] = useState(0)
+  const conversationsQuery = useQuery({
+    queryFn: fetchConversations,
+    queryKey: ['conversations', refreshTick],
+  })
+  const conversations = conversationsQuery.data?.conversations ?? []
   const [conversationId] = useConversationIdFromUrl()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [conversationToDelete, setConversationToDelete] = useState<ConversationEntry | null>(null)
+
+  useEffect(() => {
+    const refresh = () => {
+      setRefreshTick((value) => value + 1)
+    }
+
+    window.addEventListener('conversations-changed', refresh)
+    return () => {
+      window.removeEventListener('conversations-changed', refresh)
+    }
+  }, [])
 
   const handleDeleteClick = (e: React.MouseEvent, conversation: ConversationEntry) => {
     e.preventDefault()
@@ -142,9 +96,23 @@ export function AppSidebar() {
   const handleConfirmDelete = () => {
     if (conversationToDelete) {
       deleteConversation(conversationToDelete.id)
-      setDeleteDialogOpen(false)
-      setConversationToDelete(null)
-      toast.success('Chat deleted successfully')
+        .then(() => {
+          setDeleteDialogOpen(false)
+          setConversationToDelete(null)
+          setRefreshTick((value) => value + 1)
+
+          const currentPath = window.location.pathname
+          if (currentPath === `/chat/${conversationToDelete.id}`) {
+            window.history.pushState({}, '', '/')
+            window.dispatchEvent(new Event('history-state-changed'))
+          }
+
+          toast.success('Chat deleted successfully')
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to delete conversation', error)
+          toast.error('Failed to delete chat')
+        })
     }
   }
 

@@ -12,7 +12,12 @@ from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    UserPromptPart,
+)
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from sqlmodel import select
@@ -56,6 +61,24 @@ class CreateConversationResponse(
     id: str
 
 
+class ConversationSummary(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    id: str
+    first_message: str | None = None
+    timestamp: int
+
+
+class ConversationsResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    conversations: list[ConversationSummary]
+
+
 def _messages_from_snapshot(snapshot_json: JsonValue) -> list[ModelMessage]:
     if not isinstance(snapshot_json, dict):
         return []
@@ -95,6 +118,27 @@ def _latest_model_messages(
         return []
 
     return _messages_from_snapshot(latest_snapshot.agent_run_result_json)
+
+
+def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
+    for message in model_messages:
+        if not isinstance(message, ModelRequest):
+            continue
+
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart):
+                continue
+
+            if isinstance(part.content, str) and part.content.strip():
+                return part.content
+
+            if isinstance(part.content, list):
+                text_parts = [item for item in part.content if isinstance(item, str)]
+                joined = '\n'.join(text_parts).strip()
+                if joined:
+                    return joined
+
+    return None
 
 
 def _string_instructions_or_none(agent: Agent[Any, Any]) -> list[str] | None:
@@ -272,5 +316,62 @@ def create_chat_router(
         model_messages = _latest_model_messages(db_runtime, conversation_id)
         ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
         return JSONResponse({'messages': jsonable_encoder(ui_messages)})
+
+    @router.get('/chats')
+    async def list_chats(request: Request) -> JSONResponse:
+        db_runtime = getattr(request.app.state, 'db_runtime', None)
+        if not isinstance(db_runtime, DatabaseRuntime):
+            payload = ConversationsResponse(conversations=[])
+            return JSONResponse(payload.model_dump(by_alias=True))
+
+        with db_runtime.session() as session:
+            snapshots = session.exec(select(AgentRunSnapshot)).all()
+
+        latest_by_conversation: dict[str, AgentRunSnapshot] = {}
+        for snapshot in snapshots:
+            current = latest_by_conversation.get(snapshot.conversation_id)
+            if current is None or snapshot.created_at > current.created_at:
+                latest_by_conversation[snapshot.conversation_id] = snapshot
+
+        summaries: list[ConversationSummary] = []
+        for conversation_id, snapshot in latest_by_conversation.items():
+            messages = _messages_from_snapshot(snapshot.agent_run_result_json)
+            first_message = _first_user_message_text(messages)
+            summaries.append(
+                ConversationSummary(
+                    id=conversation_id,
+                    first_message=first_message,
+                    timestamp=int(snapshot.created_at.timestamp() * 1000),
+                )
+            )
+
+        sorted_summaries = sorted(
+            summaries,
+            key=lambda summary: summary.timestamp,
+            reverse=True,
+        )
+        payload = ConversationsResponse(conversations=sorted_summaries)
+        return JSONResponse(payload.model_dump(by_alias=True))
+
+    @router.delete('/chat/{conversation_id}')
+    async def delete_chat(conversation_id: str, request: Request) -> JSONResponse:
+        db_runtime = getattr(request.app.state, 'db_runtime', None)
+        if not isinstance(db_runtime, DatabaseRuntime):
+            return JSONResponse(
+                {'ok': False, 'error': 'Database runtime unavailable'},
+                status_code=503,
+            )
+
+        with db_runtime.session() as session:
+            snapshots = session.exec(
+                select(AgentRunSnapshot).where(
+                    AgentRunSnapshot.conversation_id == conversation_id
+                )
+            ).all()
+            for snapshot in snapshots:
+                session.delete(snapshot)
+            session.commit()
+
+        return JSONResponse({'ok': True})
 
     return router

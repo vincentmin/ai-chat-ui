@@ -35,7 +35,6 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react
 import { useQuery } from '@tanstack/react-query'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
-import type { ConversationEntry } from './types'
 
 interface ModelConfig {
   id: string
@@ -181,9 +180,9 @@ const Chat = () => {
       if (!conversationId) {
         createConversation()
           .then((response) => {
-            saveConversationEntryInLocalStorage(response.id, submittedText)
             setConversationId(response.id)
             setPendingMessage(submittedText)
+            window.dispatchEvent(new Event('conversations-changed'))
           })
           .catch((error: unknown) => {
             console.error('Error creating conversation:', error)
@@ -326,23 +325,3 @@ const Chat = () => {
 }
 
 export default Chat
-
-const MAX_FIRST_MESSAGE_LENGTH = 30
-
-function saveConversationEntryInLocalStorage(conversationId: string, firstMessage: string) {
-  const currentConversations = window.localStorage.getItem('conversationIds') ?? '[]'
-  const conversationIds = JSON.parse(currentConversations) as ConversationEntry[]
-  const trimmedFirstMessage =
-    firstMessage.length > MAX_FIRST_MESSAGE_LENGTH
-      ? firstMessage.slice(0, MAX_FIRST_MESSAGE_LENGTH) + '...'
-      : firstMessage
-
-  conversationIds.unshift({
-    id: conversationId,
-    firstMessage: trimmedFirstMessage,
-    timestamp: Date.now(),
-  })
-
-  window.localStorage.setItem('conversationIds', JSON.stringify(conversationIds))
-  window.dispatchEvent(new Event('local-storage-change'))
-}
