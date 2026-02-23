@@ -698,6 +698,7 @@ dependencies = [
     { name = "logfire", extra = ["fastapi", "starlette"] },
     { name = "pydantic-ai-slim", extra = ["anthropic", "cli", "google", "openai"] },
     { name = "pydantic-settings" },
+    { name = "redis" },
     { name = "redislite" },
     { name = "sqlmodel" },
     { name = "taskiq-fastapi" },
@@ -716,6 +717,7 @@ requires-dist = [
     { name = "logfire", extras = ["fastapi", "starlette"], specifier = ">=4.9.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "cli", "google", "openai"], specifier = ">=1.14.0" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "redis", specifier = "==6.2.0" },
     { name = "redislite", specifier = ">=6.2.912183" },
     { name = "sqlmodel", specifier = ">=0.0.37" },
     { name = "taskiq-fastapi", specifier = ">=0.4.0" },
@@ -1375,11 +1377,11 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "7.2.0"
+version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9f/32/6fac13a11e73e1bc67a2ae821a72bfe4c2d8c4c48f0267e4a952be0f1bae/redis-7.2.0.tar.gz", hash = "sha256:4dd5bf4bd4ae80510267f14185a15cba2a38666b941aff68cccf0256b51c1f26", size = 4901247 }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/9a/0551e01ba52b944f97480721656578c8a7c46b51b99d66814f85fe3a4f3e/redis-6.2.0.tar.gz", hash = "sha256:e821f129b75dde6cb99dd35e5c76e8c49512a5a0d8dfdc560b2fbd44b85ca977", size = 4639129 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/cf/f6180b67f99688d83e15c84c5beda831d1d341e95872d224f87ccafafe61/redis-7.2.0-py3-none-any.whl", hash = "sha256:01f591f8598e483f1842d429e8ae3a820804566f1c73dca1b80e23af9fba0497", size = 394898 },
+    { url = "https://files.pythonhosted.org/packages/13/67/e60968d3b0e077495a8fee89cf3f2373db98e528288a48f1ee44967f6e8c/redis-6.2.0-py3-none-any.whl", hash = "sha256:c8ddf316ee0aab65f04a11229e94a64b2618451dab7a67cb2f77eb799d872d5e", size = 278659 },
 ]
 
 [[package]]
