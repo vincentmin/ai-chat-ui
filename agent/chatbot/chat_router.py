@@ -1,15 +1,23 @@
 from __future__ import annotations as _annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+from .db import AgentRunSnapshot, to_json_snapshot
+from .db.runtime import DatabaseRuntime
+
+logger = logging.getLogger(__name__)
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
 
@@ -33,6 +41,27 @@ class ChatRequestExtra(
 ):
     model: str | None = None
     system_prompt: str | None = None
+    conversation_id: str | None = None
+    agent_key: str | None = None
+
+
+def _conversation_id_from_result(
+    result: AgentRunResult[Any],
+    requested_conversation_id: str | None,
+) -> str:
+    if requested_conversation_id:
+        return requested_conversation_id
+
+    metadata = result.metadata
+    if isinstance(metadata, dict):
+        maybe_conversation_id = metadata.get('conversation_id')
+        if isinstance(maybe_conversation_id, str) and maybe_conversation_id:
+            return maybe_conversation_id
+
+    if result.run_id:
+        return result.run_id
+
+    return str(uuid4())
 
 
 def _string_instructions_or_none(agent: Agent[Any, Any]) -> list[str] | None:
@@ -149,10 +178,42 @@ def create_chat_router(
         model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
         instructions = extra_data.system_prompt if can_override_system_prompt else None
 
+        db_runtime = getattr(request.app.state, 'db_runtime', None)
+
+        async def on_complete(result: AgentRunResult[Any]) -> None:
+            if not isinstance(db_runtime, DatabaseRuntime):
+                logger.warning(
+                    'db_runtime is not available; skipping AgentRunResult persistence'
+                )
+                return
+
+            conversation_id = _conversation_id_from_result(
+                result,
+                extra_data.conversation_id,
+            )
+            agent_key = (
+                extra_data.agent_key or getattr(agent, 'name', None) or 'default'
+            )
+
+            try:
+                with db_runtime.session() as session:
+                    session.add(
+                        AgentRunSnapshot(
+                            conversation_id=conversation_id,
+                            run_id=result.run_id,
+                            agent_key=agent_key,
+                            agent_run_result_json=to_json_snapshot(result),
+                        )
+                    )
+                    session.commit()
+            except Exception:
+                logger.exception('Failed to persist AgentRunResult snapshot')
+
         return adapter.streaming_response(
             adapter.run_stream(
                 model=model_ref,
                 instructions=instructions,
+                on_complete=on_complete,
             )
         )
 

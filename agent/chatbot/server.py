@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from .agent import agent
 from .chat_router import create_chat_router
+from .db.runtime import DatabaseRuntime
 from .settings import RedisRuntime, get_settings
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
@@ -26,12 +27,16 @@ if not models:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     redis_runtime = RedisRuntime(settings)
+    db_runtime = DatabaseRuntime(settings.resolved_database_url)
     redis_runtime.startup()
+    db_runtime.startup()
     app.state.settings = settings
     app.state.redis_runtime = redis_runtime
+    app.state.db_runtime = db_runtime
     try:
         yield
     finally:
+        db_runtime.shutdown()
         redis_runtime.shutdown()
 
 

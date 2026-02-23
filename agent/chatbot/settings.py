@@ -21,6 +21,11 @@ class AppSettings(BaseSettings):
     app_env: RuntimeProfile | None = Field(default=None, alias='APP_ENV')
     redis_url: str | None = Field(default=None, alias='REDIS_URL')
     redislite_dir: Path = Field(default=Path('.data/redislite'), alias='REDISLITE_DIR')
+    database_url: str | None = Field(default=None, alias='DATABASE_URL')
+    sqlite_db_path: Path = Field(
+        default=Path('.data/chatbot.db'),
+        alias='SQLITE_DB_PATH',
+    )
 
     openai_api_key: str | None = Field(default=None, alias='OPENAI_API_KEY')
     anthropic_api_key: str | None = Field(default=None, alias='ANTHROPIC_API_KEY')
@@ -42,7 +47,20 @@ class AppSettings(BaseSettings):
                 'REDIS_URL is required when APP_ENV=production '
                 'or when production profile is inferred.'
             )
+        if self.profile == RuntimeProfile.PRODUCTION and not self.database_url:
+            raise ValueError(
+                'DATABASE_URL is required when APP_ENV=production '
+                'or when production profile is inferred.'
+            )
         return self
+
+    @computed_field
+    @property
+    def resolved_database_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+
+        return f'sqlite:///{self.sqlite_db_path}'
 
     def available_models(self) -> dict[str, KnownModelName | str]:
         models: dict[str, KnownModelName | str] = {}
