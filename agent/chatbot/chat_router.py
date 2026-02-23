@@ -265,13 +265,6 @@ def create_chat_router(
         instructions = extra_data.system_prompt if can_override_system_prompt else None
 
         db_runtime = getattr(request.app.state, 'db_runtime', None)
-        if not isinstance(db_runtime, DatabaseRuntime):
-            logger.warning(
-                'db_runtime is not available; run will continue without persistence'
-            )
-            message_history: list[ModelMessage] = []
-        else:
-            message_history = _latest_model_messages(db_runtime, conversation_id)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:
             if not isinstance(db_runtime, DatabaseRuntime):
@@ -300,7 +293,6 @@ def create_chat_router(
 
         return adapter.streaming_response(
             adapter.run_stream(
-                message_history=message_history,
                 model=model_ref,
                 instructions=instructions,
                 on_complete=on_complete,
