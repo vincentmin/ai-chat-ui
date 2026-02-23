@@ -6,6 +6,7 @@ from urllib.request import urlopen
 
 import pydantic_ai
 from bs4 import BeautifulSoup
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
 
 ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 ARXIV_HTML_BASE_URL = 'https://arxiv.org/html/'
@@ -77,7 +78,7 @@ def search(query: str) -> list[dict[str, str]]:
 
 
 @agent.tool_plain
-def fetch(arxiv_id: str) -> str:
+def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
     """Fetch an Arxiv paper and return a readable plain-text version."""
     normalized_id = arxiv_id.strip()
     if normalized_id.startswith('http://') or normalized_id.startswith('https://'):
@@ -89,14 +90,26 @@ def fetch(arxiv_id: str) -> str:
             html = response.read().decode(charset, errors='replace')
             text = _html_to_text(html)
             if not text:
-                raise pydantic_ai.ModelRetry(
-                    f'No readable text extracted for Arxiv ID {arxiv_id}'
-                )
-            return text
+                raise ValueError(f'No readable text extracted for Arxiv ID {arxiv_id}')
     except Exception as e:
         raise pydantic_ai.ModelRetry(
             f'Failed to fetch and parse Arxiv paper {arxiv_id}: {e}'
         ) from e
+
+    return pydantic_ai.ToolReturn(
+        return_value=text,
+        metadata=[
+            SourceUrlChunk(
+                source_id=arxiv_id,
+                url=f'{ARXIV_HTML_BASE_URL}{normalized_id}',
+                title=f'Arxiv Paper {normalized_id}',
+            ),
+            DataChunk(
+                type='data-search-results',
+                data={'arxiv_id': normalized_id},
+            ),
+        ],
+    )
 
 
 if __name__ == '__main__':
