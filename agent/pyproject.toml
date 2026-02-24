@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.14.3",
+    "duckdb>=1.4.4",
     "fastapi>=0.117.1",
     "logfire[fastapi,starlette]>=4.9.0",
     "pydantic-ai-slim[anthropic,cli,google,openai]>=1.14.0",
