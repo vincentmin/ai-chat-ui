@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import (
     DataChunk,
     FileChunk,
@@ -86,6 +87,14 @@ class ConversationsResponse(
     populate_by_name=True,
 ):
     conversations: list[ConversationSummary]
+
+
+class ChatMessagesResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    messages: list[UIMessage]
 
 
 def _messages_from_json(messages_json: JsonValue) -> list[ModelMessage]:
@@ -344,18 +353,20 @@ def create_chat_router(
         )
 
     @router.get('/chat/{conversation_id}')
-    async def get_chat(conversation_id: str, request: Request) -> JSONResponse:
+    async def get_chat(conversation_id: str, request: Request) -> ChatMessagesResponse:
         db_runtime = getattr(request.app.state, 'db_runtime', None)
         if not isinstance(db_runtime, DatabaseRuntime):
-            return JSONResponse({'messages': []})
+            return ChatMessagesResponse(messages=[])
 
         latest_snapshot = _latest_snapshot(db_runtime, conversation_id)
         if latest_snapshot is None:
-            return JSONResponse({'messages': []})
+            return ChatMessagesResponse(messages=[])
 
         model_messages = _messages_from_json(latest_snapshot.model_messages_json)
         ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
-        return JSONResponse({'messages': jsonable_encoder(ui_messages)})
+        return ChatMessagesResponse.model_validate(
+            {'messages': jsonable_encoder(ui_messages)}
+        )
 
     @router.get('/chats')
     async def list_chats(request: Request) -> JSONResponse:
