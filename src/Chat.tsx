@@ -25,14 +25,17 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
-import { SquarePenIcon } from 'lucide-react'
+import { DatabaseIcon, EyeOffIcon, SquarePenIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
+import type { PanelImperativeHandle } from 'react-resizable-panels'
 
 import { useQuery } from '@tanstack/react-query'
+import { SqlResultTable, type SqlResultData } from '@/components/sql-result-table'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 
@@ -53,6 +56,34 @@ interface CreateConversationResponse {
 
 interface ChatHistoryResponse {
   messages: UIMessage[]
+}
+
+interface DataPartEvent {
+  type: string
+  data: unknown
+}
+
+function isSqlResultData(value: unknown): value is SqlResultData {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.sql_query === 'string' && Array.isArray(candidate.columns) && Array.isArray(candidate.rows)
+}
+
+function getLatestSqlResult(messages: UIMessage[]): SqlResultData | null {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex] as { type?: unknown; data?: unknown }
+      if (part.type === 'data-sql-result' && isSqlResultData(part.data)) {
+        return part.data
+      }
+    }
+  }
+
+  return null
 }
 
 async function getConfig() {
@@ -85,12 +116,23 @@ const Chat = () => {
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
+  const [sqlResult, setSqlResult] = useState<SqlResultData | null>(null)
+  const [isSqlPanelOpen, setIsSqlPanelOpen] = useState(false)
+  const dataPanelRef = useRef<PanelImperativeHandle | null>(null)
   const [conversationId, setConversationId] = useConversationIdFromUrl()
   const chatApi = conversationId ? `/api/chat/${conversationId}` : '/api/chat/__pending__'
   const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
   const { messages, sendMessage, status, setMessages, regenerate, error } = useChat({
     id: conversationId ?? undefined,
     transport,
+    onData: (part) => {
+      const dataPart = part as DataPartEvent
+      if (dataPart.type !== 'data-sql-result' || !isSqlResultData(dataPart.data)) {
+        return
+      }
+
+      setSqlResult(dataPart.data)
+    },
     onFinish: ({ isAbort, isDisconnect, isError }) => {
       if (conversationId && !isAbort && !isDisconnect && !isError) {
         window.dispatchEvent(new Event('conversations-changed'))
@@ -127,18 +169,28 @@ const Chat = () => {
     async function loadConversation() {
       if (!conversationId) {
         setMessages([])
+        setSqlResult(null)
+        setIsSqlPanelOpen(false)
+        dataPanelRef.current?.collapse()
         return
       }
 
       try {
         const response = await getConversationMessages(conversationId)
         if (!disposed) {
+          const latestSqlResult = getLatestSqlResult(response.messages)
           setMessages(response.messages)
+          setSqlResult(latestSqlResult)
+          setIsSqlPanelOpen(false)
+          dataPanelRef.current?.collapse()
         }
       } catch (error: unknown) {
         console.error('Error loading conversation:', error)
         if (!disposed) {
           setMessages([])
+          setSqlResult(null)
+          setIsSqlPanelOpen(false)
+          dataPanelRef.current?.collapse()
         }
       }
     }
@@ -152,6 +204,29 @@ const Chat = () => {
       disposed = true
     }
   }, [conversationId, setMessages])
+
+  useEffect(() => {
+    setSqlResult(null)
+    setIsSqlPanelOpen(false)
+    dataPanelRef.current?.collapse()
+  }, [conversationId])
+
+  useEffect(() => {
+    const panel = dataPanelRef.current
+    if (!panel) {
+      return
+    }
+
+    if (isSqlPanelOpen && sqlResult) {
+      panel.expand()
+      if (panel.getSize().asPercentage < 20) {
+        panel.resize(40)
+      }
+      return
+    }
+
+    panel.collapse()
+  }, [isSqlPanelOpen, sqlResult])
 
   const sendTextMessage = (text: string) => {
     sendMessage(
@@ -205,8 +280,10 @@ const Chat = () => {
     })
   }
 
-  return (
-    <>
+  const showSqlPanel = isSqlPanelOpen && sqlResult !== null
+  const hasSqlResult = sqlResult !== null
+  const chatPane = (
+    <div className="flex h-full min-h-0 flex-col">
       <Conversation className="h-full">
         <ConversationContent>
           {messages.map((message) => (
@@ -319,12 +396,84 @@ const Chat = () => {
                   </PromptInputModelSelectContent>
                 </PromptInputModelSelect>
               )}
+              {sqlResult && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PromptInputButton
+                      type="button"
+                      variant={showSqlPanel ? 'outline' : 'default'}
+                      aria-label={showSqlPanel ? 'Hide data' : 'Show data'}
+                      className={
+                        showSqlPanel
+                          ? 'shrink-0'
+                          : 'shrink-0 animate-pulse ring-2 ring-primary/40 shadow-md shadow-primary/30'
+                      }
+                      onClick={() => {
+                        setIsSqlPanelOpen((open) => !open)
+                      }}
+                    >
+                      {showSqlPanel ? <EyeOffIcon className="size-4" /> : <DatabaseIcon className="size-4" />}
+                    </PromptInputButton>
+                  </TooltipTrigger>
+                  <TooltipContent>{showSqlPanel ? 'Hide data' : 'Show data'}</TooltipContent>
+                </Tooltip>
+              )}
             </PromptInputTools>
             <PromptInputSubmit disabled={!input} status={status} />
           </PromptInputToolbar>
         </PromptInput>
       </div>
-    </>
+    </div>
+  )
+
+  if (!hasSqlResult) {
+    return chatPane
+  }
+
+  return (
+    <ResizablePanelGroup orientation="vertical" className="h-full min-h-0">
+      <ResizablePanel panelRef={dataPanelRef} defaultSize={40} minSize={20} collapsedSize={0} collapsible>
+        {showSqlPanel ? (
+          <section className="flex h-full min-h-0 flex-col border-b bg-linear-to-b from-background to-muted/20">
+            <div className="flex items-start justify-between border-b p-4 gap-3 bg-background/80">
+              <div>
+                <h2 className="font-semibold">Query result</h2>
+                <p className="text-sm text-muted-foreground">
+                  {`${sqlResult.row_count} rows x ${sqlResult.column_count} columns`}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setIsSqlPanelOpen(false)
+                }}
+              >
+                Hide data
+              </Button>
+            </div>
+            <div className="px-4 pb-4 pt-3 overflow-auto min-h-0">
+              <div className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+                <div className="border-b px-3 py-2">
+                  <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{sqlResult.sql_query}</pre>
+                </div>
+                <div className="p-2">
+                  <SqlResultTable result={sqlResult} />
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+      </ResizablePanel>
+      <ResizableHandle
+        withHandle={showSqlPanel}
+        className={showSqlPanel ? 'bg-border/80' : 'opacity-0 pointer-events-none'}
+      />
+      <ResizablePanel defaultSize={60} minSize={35}>
+        {chatPane}
+      </ResizablePanel>
+    </ResizablePanelGroup>
   )
 }
 
