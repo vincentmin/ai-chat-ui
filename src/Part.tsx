@@ -18,6 +18,18 @@ interface PartProps {
 }
 
 export function Part({ part, message, status, regen, index, lastMessage }: PartProps) {
+  function parseMaybeJson(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return value
+    }
+
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }
+
   function copy(text: string) {
     navigator.clipboard.writeText(text).catch((error: unknown) => {
       console.error('Error copying text:', error)
@@ -65,7 +77,23 @@ export function Part({ part, message, status, regen, index, lastMessage }: PartP
       </Reasoning>
     )
   } else if (part.type === 'dynamic-tool') {
-    return <>Dynamic Tool, TODO {JSON.stringify(part)}</>
+    const parsedInput = parseMaybeJson(part.input)
+    const parsedOutput = part.state === 'output-available' ? parseMaybeJson(part.output) : undefined
+
+    return (
+      <Tool>
+        <ToolHeader type={`tool-${part.toolName}`} state={part.state} />
+        <ToolContent>
+          <ToolInput input={parsedInput} />
+          {(part.state === 'output-available' || part.state === 'output-error') && (
+            <ToolOutput
+              errorText={part.errorText}
+              output={<CodeBlock code={JSON.stringify(parsedOutput, null, 2)} language="json" />}
+            />
+          )}
+        </ToolContent>
+      </Tool>
+    )
   } else if ('toolCallId' in part) {
     // return <div>{JSON.stringify(part)}</div>
     return (

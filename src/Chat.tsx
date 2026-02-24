@@ -211,19 +211,18 @@ const Chat = () => {
         <ConversationContent>
           {messages.map((message) => (
             <div key={message.id}>
-              {message.role === 'assistant' &&
-                message.parts.filter((part) => part.type === 'source-url').length > 0 && (
-                  <Sources>
-                    <SourcesTrigger count={message.parts.filter((part) => part.type === 'source-url').length} />
-                    {message.parts
-                      .filter((part) => part.type === 'source-url')
-                      .map((part, i) => (
-                        <SourcesContent key={`${message.id}-${i}`}>
-                          <Source key={`${message.id}-${i}`} href={part.url} title={part.url} />
-                        </SourcesContent>
-                      ))}
-                  </Sources>
-                )}
+              {message.parts.filter((part) => part.type === 'source-url').length > 0 && (
+                <Sources>
+                  <SourcesTrigger count={message.parts.filter((part) => part.type === 'source-url').length} />
+                  {message.parts
+                    .filter((part) => part.type === 'source-url')
+                    .map((part, i) => (
+                      <SourcesContent key={`${message.id}-${i}`}>
+                        <Source key={`${message.id}-${i}`} href={part.url} title={part.url} />
+                      </SourcesContent>
+                    ))}
+                </Sources>
+              )}
               {message.parts.map((part, i) => (
                 <Part
                   key={`${message.id}-${i}`}

@@ -22,7 +22,7 @@ def _html_to_text(html: str) -> str:
 
 
 agent = pydantic_ai.Agent(
-    model='openai-responses:gpt-5-nano',
+    model='openai-responses:gpt-4.1-nano',
     instructions='You are an expert research assistant with access to Arxiv.',
 )
 

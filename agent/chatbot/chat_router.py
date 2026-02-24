@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import logging
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
@@ -94,22 +95,143 @@ def _latest_model_messages(
     db_runtime: DatabaseRuntime,
     conversation_id: str,
 ) -> list[ModelMessage]:
+    latest_snapshot = _latest_snapshot(db_runtime, conversation_id)
+
+    if latest_snapshot is None:
+        return []
+
+    return _messages_from_json(latest_snapshot.model_messages_json)
+
+
+def _latest_snapshot(
+    db_runtime: DatabaseRuntime,
+    conversation_id: str,
+) -> AgentRunSnapshot | None:
     with db_runtime.session() as session:
         statement = select(AgentRunSnapshot).where(
             AgentRunSnapshot.conversation_id == conversation_id
         )
         snapshots = session.exec(statement).all()
 
-    latest_snapshot = max(
+    return max(
         snapshots,
         key=lambda snapshot: snapshot.created_at,
         default=None,
     )
 
-    if latest_snapshot is None:
-        return []
 
-    return _messages_from_json(latest_snapshot.model_messages_json)
+def _metadata_parts_by_tool_call_id(
+    model_messages_json: JsonValue,
+) -> dict[str, list[dict[str, JsonValue]]]:
+    if not isinstance(model_messages_json, list):
+        return {}
+
+    metadata_parts_by_call_id: dict[str, list[dict[str, JsonValue]]] = {}
+
+    for message in model_messages_json:
+        if not isinstance(message, dict):
+            continue
+
+        parts = message.get('parts')
+        if not isinstance(parts, list):
+            continue
+
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+
+            if part.get('part_kind') != 'tool-return':
+                continue
+
+            tool_call_id = part.get('tool_call_id')
+            if not isinstance(tool_call_id, str):
+                continue
+
+            metadata = part.get('metadata')
+            if not isinstance(metadata, list):
+                continue
+
+            ui_parts = metadata_parts_by_call_id.setdefault(tool_call_id, [])
+
+            for item in metadata:
+                if not isinstance(item, dict):
+                    continue
+
+                chunk_type = item.get('type')
+                if chunk_type == 'source-url':
+                    source_id = item.get('source_id')
+                    url = item.get('url')
+                    title = item.get('title')
+                    if not isinstance(source_id, str) or not isinstance(url, str):
+                        continue
+
+                    source_part: dict[str, JsonValue] = {
+                        'type': 'source-url',
+                        'sourceId': source_id,
+                        'url': url,
+                    }
+                    if isinstance(title, str):
+                        source_part['title'] = title
+
+                    provider_metadata = item.get('provider_metadata')
+                    if provider_metadata is not None:
+                        source_part['providerMetadata'] = deepcopy(provider_metadata)
+
+                    ui_parts.append(source_part)
+                    continue
+
+                if isinstance(chunk_type, str) and chunk_type.startswith('data-'):
+                    data_part: dict[str, JsonValue] = {'type': chunk_type}
+
+                    chunk_id = item.get('id')
+                    if isinstance(chunk_id, str):
+                        data_part['id'] = chunk_id
+
+                    if 'data' in item:
+                        data_part['data'] = deepcopy(item['data'])
+
+                    ui_parts.append(data_part)
+
+    return metadata_parts_by_call_id
+
+
+def _inject_tool_metadata_parts(
+    ui_messages: JsonValue,
+    model_messages_json: JsonValue,
+) -> JsonValue:
+    if not isinstance(ui_messages, list):
+        return ui_messages
+
+    metadata_parts_by_call_id = _metadata_parts_by_tool_call_id(model_messages_json)
+    if not metadata_parts_by_call_id:
+        return ui_messages
+
+    for message in ui_messages:
+        if not isinstance(message, dict):
+            continue
+
+        parts = message.get('parts')
+        if not isinstance(parts, list):
+            continue
+
+        merged_parts: list[JsonValue] = []
+        for part in parts:
+            merged_parts.append(part)
+
+            if not isinstance(part, dict):
+                continue
+
+            tool_call_id = part.get('toolCallId')
+            if not isinstance(tool_call_id, str):
+                continue
+
+            metadata_parts = metadata_parts_by_call_id.pop(tool_call_id, None)
+            if metadata_parts:
+                merged_parts.extend(deepcopy(metadata_parts))
+
+        message['parts'] = merged_parts
+
+    return ui_messages
 
 
 def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
@@ -297,9 +419,18 @@ def create_chat_router(
         if not isinstance(db_runtime, DatabaseRuntime):
             return JSONResponse({'messages': []})
 
-        model_messages = _latest_model_messages(db_runtime, conversation_id)
+        latest_snapshot = _latest_snapshot(db_runtime, conversation_id)
+        if latest_snapshot is None:
+            return JSONResponse({'messages': []})
+
+        model_messages = _messages_from_json(latest_snapshot.model_messages_json)
         ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
-        return JSONResponse({'messages': jsonable_encoder(ui_messages)})
+        encoded_messages = jsonable_encoder(ui_messages)
+        patched_messages = _inject_tool_metadata_parts(
+            encoded_messages,
+            latest_snapshot.model_messages_json,
+        )
+        return JSONResponse({'messages': patched_messages})
 
     @router.get('/chats')
     async def list_chats(request: Request) -> JSONResponse:
