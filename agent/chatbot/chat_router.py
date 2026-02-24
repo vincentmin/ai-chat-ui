@@ -2,14 +2,13 @@ from __future__ import annotations as _annotations
 
 import logging
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
@@ -17,10 +16,17 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.response_types import (
+    DataChunk,
+    FileChunk,
+    SourceDocumentChunk,
+    SourceUrlChunk,
+)
 from sqlmodel import select
 
 from .db import AgentRunSnapshot, to_json_value
@@ -30,6 +36,8 @@ from .db.runtime import DatabaseRuntime
 logger = logging.getLogger(__name__)
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
+MetadataChunk = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
+_metadata_chunk_adapter = TypeAdapter(MetadataChunk)
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -85,10 +93,46 @@ def _messages_from_json(messages_json: JsonValue) -> list[ModelMessage]:
         return []
 
     try:
-        return ModelMessagesTypeAdapter.validate_python(messages_json)
+        messages = ModelMessagesTypeAdapter.validate_python(messages_json)
+        return _rehydrate_tool_return_metadata(messages)
     except Exception:
         logger.exception('Failed to deserialize model messages')
         return []
+
+
+def _rehydrate_metadata_item(value: Any) -> Any:
+    if isinstance(value, (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)):
+        return value
+
+    if not isinstance(value, dict):
+        return value
+
+    chunk_type = value.get('type')
+    if not isinstance(chunk_type, str):
+        return value
+
+    try:
+        return _metadata_chunk_adapter.validate_python(value)
+    except Exception:
+        return value
+
+
+def _rehydrate_tool_return_metadata(messages: list[ModelMessage]) -> list[ModelMessage]:
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+
+        for part in message.parts:
+            if not isinstance(part, ToolReturnPart):
+                continue
+
+            metadata = part.metadata
+            if isinstance(metadata, list):
+                part.metadata = [_rehydrate_metadata_item(item) for item in metadata]
+            else:
+                part.metadata = _rehydrate_metadata_item(metadata)
+
+    return messages
 
 
 def _latest_model_messages(
@@ -118,120 +162,6 @@ def _latest_snapshot(
         key=lambda snapshot: snapshot.created_at,
         default=None,
     )
-
-
-def _metadata_parts_by_tool_call_id(
-    model_messages_json: JsonValue,
-) -> dict[str, list[dict[str, JsonValue]]]:
-    if not isinstance(model_messages_json, list):
-        return {}
-
-    metadata_parts_by_call_id: dict[str, list[dict[str, JsonValue]]] = {}
-
-    for message in model_messages_json:
-        if not isinstance(message, dict):
-            continue
-
-        parts = message.get('parts')
-        if not isinstance(parts, list):
-            continue
-
-        for part in parts:
-            if not isinstance(part, dict):
-                continue
-
-            if part.get('part_kind') != 'tool-return':
-                continue
-
-            tool_call_id = part.get('tool_call_id')
-            if not isinstance(tool_call_id, str):
-                continue
-
-            metadata = part.get('metadata')
-            if not isinstance(metadata, list):
-                continue
-
-            ui_parts = metadata_parts_by_call_id.setdefault(tool_call_id, [])
-
-            for item in metadata:
-                if not isinstance(item, dict):
-                    continue
-
-                chunk_type = item.get('type')
-                if chunk_type == 'source-url':
-                    source_id = item.get('source_id')
-                    url = item.get('url')
-                    title = item.get('title')
-                    if not isinstance(source_id, str) or not isinstance(url, str):
-                        continue
-
-                    source_part: dict[str, JsonValue] = {
-                        'type': 'source-url',
-                        'sourceId': source_id,
-                        'url': url,
-                    }
-                    if isinstance(title, str):
-                        source_part['title'] = title
-
-                    provider_metadata = item.get('provider_metadata')
-                    if provider_metadata is not None:
-                        source_part['providerMetadata'] = deepcopy(provider_metadata)
-
-                    ui_parts.append(source_part)
-                    continue
-
-                if isinstance(chunk_type, str) and chunk_type.startswith('data-'):
-                    data_part: dict[str, JsonValue] = {'type': chunk_type}
-
-                    chunk_id = item.get('id')
-                    if isinstance(chunk_id, str):
-                        data_part['id'] = chunk_id
-
-                    if 'data' in item:
-                        data_part['data'] = deepcopy(item['data'])
-
-                    ui_parts.append(data_part)
-
-    return metadata_parts_by_call_id
-
-
-def _inject_tool_metadata_parts(
-    ui_messages: JsonValue,
-    model_messages_json: JsonValue,
-) -> JsonValue:
-    if not isinstance(ui_messages, list):
-        return ui_messages
-
-    metadata_parts_by_call_id = _metadata_parts_by_tool_call_id(model_messages_json)
-    if not metadata_parts_by_call_id:
-        return ui_messages
-
-    for message in ui_messages:
-        if not isinstance(message, dict):
-            continue
-
-        parts = message.get('parts')
-        if not isinstance(parts, list):
-            continue
-
-        merged_parts: list[JsonValue] = []
-        for part in parts:
-            merged_parts.append(part)
-
-            if not isinstance(part, dict):
-                continue
-
-            tool_call_id = part.get('toolCallId')
-            if not isinstance(tool_call_id, str):
-                continue
-
-            metadata_parts = metadata_parts_by_call_id.pop(tool_call_id, None)
-            if metadata_parts:
-                merged_parts.extend(deepcopy(metadata_parts))
-
-        message['parts'] = merged_parts
-
-    return ui_messages
 
 
 def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
@@ -425,12 +355,7 @@ def create_chat_router(
 
         model_messages = _messages_from_json(latest_snapshot.model_messages_json)
         ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
-        encoded_messages = jsonable_encoder(ui_messages)
-        patched_messages = _inject_tool_metadata_parts(
-            encoded_messages,
-            latest_snapshot.model_messages_json,
-        )
-        return JSONResponse({'messages': patched_messages})
+        return JSONResponse({'messages': jsonable_encoder(ui_messages)})
 
     @router.get('/chats')
     async def list_chats(request: Request) -> JSONResponse:
