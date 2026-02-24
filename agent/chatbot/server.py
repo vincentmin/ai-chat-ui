@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 import logfire
 from fastapi import FastAPI
 
-from .agent import agent
 from .chat_router import create_chat_router
 from .db.runtime import DatabaseRuntime
 from .settings import RedisRuntime, get_settings
+from .sql_agent import agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
 # have logfire configured
