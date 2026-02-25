@@ -36,8 +36,8 @@ interface ConversationsResponse {
   conversations: ConversationEntry[]
 }
 
-async function fetchConversations() {
-  const res = await fetch('/api/chats')
+async function fetchConversations(apiBasePath: string) {
+  const res = await fetch(`${apiBasePath}/chats`)
   if (!res.ok) {
     throw new Error('Failed to fetch conversations')
   }
@@ -55,8 +55,8 @@ function doLocalNavigation(e: React.MouseEvent) {
   e.preventDefault()
 }
 
-async function deleteConversation(conversationId: string) {
-  const res = await fetch(`/api/chat/${conversationId}`, {
+async function deleteConversation(apiBasePath: string, conversationId: string) {
+  const res = await fetch(`${apiBasePath}/chat/${conversationId}`, {
     method: 'DELETE',
   })
   if (!res.ok) {
@@ -64,14 +64,20 @@ async function deleteConversation(conversationId: string) {
   }
 }
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  apiBasePath: string
+  conversationBasePath: string
+  title: string
+}
+
+export function AppSidebar({ apiBasePath, conversationBasePath, title }: AppSidebarProps) {
   const [refreshTick, setRefreshTick] = useState(0)
   const conversationsQuery = useQuery({
-    queryFn: fetchConversations,
-    queryKey: ['conversations', refreshTick],
+    queryFn: () => fetchConversations(apiBasePath),
+    queryKey: ['conversations', apiBasePath, refreshTick],
   })
   const conversations = conversationsQuery.data?.conversations ?? []
-  const [conversationId] = useConversationIdFromUrl()
+  const [conversationId] = useConversationIdFromUrl(conversationBasePath)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [conversationToDelete, setConversationToDelete] = useState<ConversationEntry | null>(null)
 
@@ -95,15 +101,15 @@ export function AppSidebar() {
 
   const handleConfirmDelete = () => {
     if (conversationToDelete) {
-      deleteConversation(conversationToDelete.id)
+      deleteConversation(apiBasePath, conversationToDelete.id)
         .then(() => {
           setDeleteDialogOpen(false)
           setConversationToDelete(null)
           setRefreshTick((value) => value + 1)
 
           const currentPath = window.location.pathname
-          if (currentPath === `/chat/${conversationToDelete.id}`) {
-            window.history.pushState({}, '', '/')
+          if (currentPath === `${conversationBasePath}/chat/${conversationToDelete.id}`) {
+            window.history.pushState({}, '', conversationBasePath)
             window.dispatchEvent(new Event('history-state-changed'))
           }
 
@@ -124,7 +130,7 @@ export function AppSidebar() {
           <div className="ml-2 flex items-center">
             <h1 className="text-l font-medium text-balance truncate whitespace-nowrap">
               <img src={logoSvg} className="inline h-4 mr-2 mb-1" />
-              <span className="group-data-[state=collapsed]:invisible">Pydantic AI</span>
+              <span className="group-data-[state=collapsed]:invisible">{title}</span>
             </h1>
           </div>
         </SidebarHeader>
@@ -134,7 +140,7 @@ export function AppSidebar() {
             <SidebarMenu className="mb-2">
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Start a new conversation">
-                  <a href="/" onClick={doLocalNavigation}>
+                  <a href={conversationBasePath} onClick={doLocalNavigation}>
                     <CirclePlus />
                     <span>New conversation</span>
                   </a>
@@ -149,7 +155,7 @@ export function AppSidebar() {
                     <div className="flex items-center gap-1 h-auto">
                       <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
                         <a
-                          href={`/chat/${conversation.id}`}
+                          href={`${conversationBasePath}/chat/${conversation.id}`}
                           onClick={doLocalNavigation}
                           className={cn('h-auto flex items-start gap-2', {
                             'bg-accent pointer-events-none': conversation.id === conversationId,

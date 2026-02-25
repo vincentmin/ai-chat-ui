@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 import logfire
 from fastapi import FastAPI
 
+from .arxiv_agent import agent as arxiv_agent
 from .chat_router import create_chat_router
 from .db.runtime import DatabaseRuntime
 from .settings import RedisRuntime, get_settings
-from .sql_agent import agent
+from .sql_agent import agent as sql_agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
 # have logfire configured
@@ -43,9 +44,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='AI Chat API', lifespan=lifespan)
 app.include_router(
     create_chat_router(
-        agent=agent,
+        agent=sql_agent,
         models=models,
+        agent_key='sql',
     ),
-    prefix='/api',
+    prefix='/api/v1/sql',
+)
+app.include_router(
+    create_chat_router(
+        agent=arxiv_agent,
+        models=models,
+        agent_key='arxiv',
+    ),
+    prefix='/api/v1/arxiv',
 )
 logfire.instrument_fastapi(app)

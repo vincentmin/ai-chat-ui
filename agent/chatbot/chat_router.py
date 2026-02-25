@@ -147,8 +147,9 @@ def _rehydrate_tool_return_metadata(messages: list[ModelMessage]) -> list[ModelM
 def _latest_model_messages(
     db_runtime: DatabaseRuntime,
     conversation_id: str,
+    agent_key: str,
 ) -> list[ModelMessage]:
-    latest_snapshot = _latest_snapshot(db_runtime, conversation_id)
+    latest_snapshot = _latest_snapshot(db_runtime, conversation_id, agent_key)
 
     if latest_snapshot is None:
         return []
@@ -159,10 +160,12 @@ def _latest_model_messages(
 def _latest_snapshot(
     db_runtime: DatabaseRuntime,
     conversation_id: str,
+    agent_key: str,
 ) -> AgentRunSnapshot | None:
     with db_runtime.session() as session:
         statement = select(AgentRunSnapshot).where(
-            AgentRunSnapshot.conversation_id == conversation_id
+            AgentRunSnapshot.conversation_id == conversation_id,
+            AgentRunSnapshot.agent_key == agent_key,
         )
         snapshots = session.exec(statement).all()
 
@@ -237,6 +240,7 @@ def create_chat_router(
     *,
     agent: Agent[Any, Any],
     models: ModelsParam,
+    agent_key: str,
 ) -> APIRouter:
     model_id_to_ref, model_infos = _build_model_options(agent, models)
     model_ids = set(model_id_to_ref.keys())
@@ -326,9 +330,7 @@ def create_chat_router(
                 )
                 return
 
-            agent_key = (
-                extra_data.agent_key or getattr(agent, 'name', None) or 'default'
-            )
+            snapshot_agent_key = extra_data.agent_key or agent_key
 
             try:
                 with db_runtime.session() as session:
@@ -336,7 +338,7 @@ def create_chat_router(
                         AgentRunSnapshot(
                             conversation_id=conversation_id,
                             run_id=result.run_id,
-                            agent_key=agent_key,
+                            agent_key=snapshot_agent_key,
                             model_messages_json=to_json_value(result.all_messages()),
                         )
                     )
@@ -358,7 +360,7 @@ def create_chat_router(
         if not isinstance(db_runtime, DatabaseRuntime):
             return ChatMessagesResponse(messages=[])
 
-        latest_snapshot = _latest_snapshot(db_runtime, conversation_id)
+        latest_snapshot = _latest_snapshot(db_runtime, conversation_id, agent_key)
         if latest_snapshot is None:
             return ChatMessagesResponse(messages=[])
 
@@ -376,7 +378,9 @@ def create_chat_router(
             return JSONResponse(payload.model_dump(by_alias=True))
 
         with db_runtime.session() as session:
-            snapshots = session.exec(select(AgentRunSnapshot)).all()
+            snapshots = session.exec(
+                select(AgentRunSnapshot).where(AgentRunSnapshot.agent_key == agent_key)
+            ).all()
 
         latest_by_conversation: dict[str, AgentRunSnapshot] = {}
         for snapshot in snapshots:
@@ -416,7 +420,8 @@ def create_chat_router(
         with db_runtime.session() as session:
             snapshots = session.exec(
                 select(AgentRunSnapshot).where(
-                    AgentRunSnapshot.conversation_id == conversation_id
+                    AgentRunSnapshot.conversation_id == conversation_id,
+                    AgentRunSnapshot.agent_key == agent_key,
                 )
             ).all()
             for snapshot in snapshots:

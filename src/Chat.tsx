@@ -34,7 +34,7 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react
 
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatTopPanelLayout } from '@/components/agent-chat-top-panel-layout'
-import { sqlTopPanelPlugin } from '@/features/sql-agent/sql-data-panel'
+import type { AgentTopPanelPlugin } from '@/features/agent-top-panel-plugin'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 
@@ -57,13 +57,13 @@ interface ChatHistoryResponse {
   messages: UIMessage[]
 }
 
-async function getConfig() {
-  const res = await fetch('/api/configure')
+async function getConfig(apiBasePath: string) {
+  const res = await fetch(`${apiBasePath}/configure`)
   return (await res.json()) as RemoteConfig
 }
 
-async function createConversation() {
-  const res = await fetch('/api/chat', {
+async function createConversation(apiBasePath: string) {
+  const res = await fetch(`${apiBasePath}/chat`, {
     method: 'POST',
   })
   if (!res.ok) {
@@ -72,22 +72,27 @@ async function createConversation() {
   return (await res.json()) as CreateConversationResponse
 }
 
-async function getConversationMessages(conversationId: string) {
-  const res = await fetch(`/api/chat/${conversationId}`)
+async function getConversationMessages(apiBasePath: string, conversationId: string) {
+  const res = await fetch(`${apiBasePath}/chat/${conversationId}`)
   if (!res.ok) {
     throw new Error('Failed to load conversation')
   }
   return (await res.json()) as ChatHistoryResponse
 }
 
-const Chat = () => {
+interface ChatProps<TTopPanelData> {
+  apiBasePath: string
+  conversationBasePath: string
+  topPanelPlugin: AgentTopPanelPlugin<TTopPanelData>
+}
+
+const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugin }: ChatProps<TTopPanelData>) => {
   const [input, setInput] = useState('')
   const [model, setModel] = useState<string>('')
   const [systemPrompt, setSystemPrompt] = useState<string>('')
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
-  const topPanelPlugin = sqlTopPanelPlugin
   const TopPanelToggleButton = topPanelPlugin.ToggleButton
   const TopPanelView = topPanelPlugin.TopPanel
   const {
@@ -100,8 +105,8 @@ const Chat = () => {
     closeTopPanel,
     resetTopPanel,
   } = topPanelPlugin.useTopPanelController()
-  const [conversationId, setConversationId] = useConversationIdFromUrl()
-  const chatApi = conversationId ? `/api/chat/${conversationId}` : '/api/chat/__pending__'
+  const [conversationId, setConversationId] = useConversationIdFromUrl(conversationBasePath)
+  const chatApi = conversationId ? `${apiBasePath}/chat/${conversationId}` : `${apiBasePath}/chat/__pending__`
   const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
   const { messages, sendMessage, status, setMessages, regenerate, error } = useChat({
     id: conversationId ?? undefined,
@@ -116,8 +121,8 @@ const Chat = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const configQuery = useQuery({
-    queryFn: getConfig,
-    queryKey: ['chat-config'],
+    queryFn: () => getConfig(apiBasePath),
+    queryKey: ['chat-config', apiBasePath],
   })
 
   useEffect(() => {
@@ -148,7 +153,7 @@ const Chat = () => {
       }
 
       try {
-        const response = await getConversationMessages(conversationId)
+        const response = await getConversationMessages(apiBasePath, conversationId)
         if (!disposed) {
           setMessages(response.messages)
           hydrateFromMessages(response.messages)
@@ -170,7 +175,7 @@ const Chat = () => {
     return () => {
       disposed = true
     }
-  }, [conversationId, hydrateFromMessages, resetTopPanel, setMessages])
+  }, [apiBasePath, conversationId, hydrateFromMessages, resetTopPanel, setMessages])
 
   useEffect(() => {
     resetTopPanel()
@@ -206,7 +211,7 @@ const Chat = () => {
       setInput('')
 
       if (!conversationId) {
-        createConversation()
+        createConversation(apiBasePath)
           .then((response) => {
             setConversationId(response.id)
             setPendingMessage(submittedText)
