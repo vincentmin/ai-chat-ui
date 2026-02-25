@@ -1,36 +1,36 @@
-import type { AgentTopPanelPlugin } from '@/features/agent-top-panel-plugin'
+import type { AgentDataPanelPlugin } from '@/features/agent-top-panel-plugin'
 import type { UIMessage } from 'ai'
 import { useCallback } from 'react'
 
-function useArxivTopPanelController() {
+function useArxivDataPanelController() {
   const onDataPart = useCallback((_part: unknown) => undefined, [])
   const hydrateFromMessages = useCallback((_messages: UIMessage[]) => undefined, [])
-  const toggleTopPanel = useCallback(() => undefined, [])
-  const closeTopPanel = useCallback(() => undefined, [])
-  const resetTopPanel = useCallback(() => undefined, [])
+  const toggleDataPanel = useCallback(() => undefined, [])
+  const closeDataPanel = useCallback(() => undefined, [])
+  const resetDataPanel = useCallback(() => undefined, [])
 
   return {
     data: null,
     hasData: false,
-    showTopPanel: false,
+    showDataPanel: false,
     onDataPart,
     hydrateFromMessages,
-    toggleTopPanel,
-    closeTopPanel,
-    resetTopPanel,
+    toggleDataPanel,
+    closeDataPanel,
+    resetDataPanel,
   }
 }
 
-function ArxivTopPanelToggleButton() {
+function ArxivDataPanelToggleButton() {
   return null
 }
 
-function ArxivTopPanelView() {
+function ArxivDataPanelView() {
   return null
 }
 
-export const arxivTopPanelPlugin: AgentTopPanelPlugin<null> = {
-  useTopPanelController: useArxivTopPanelController,
-  ToggleButton: ArxivTopPanelToggleButton,
-  TopPanel: ArxivTopPanelView,
+export const arxivDataPanelPlugin: AgentDataPanelPlugin<null> = {
+  useDataPanelController: useArxivDataPanelController,
+  ToggleButton: ArxivDataPanelToggleButton,
+  DataPanel: ArxivDataPanelView,
 }

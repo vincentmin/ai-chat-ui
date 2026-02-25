@@ -4,9 +4,9 @@ import { ThemeProvider } from './components/theme-provider.tsx'
 import { SidebarProvider } from './components/ui/sidebar.tsx'
 import { Toaster } from './components/ui/sonner.tsx'
 import type { SqlResultData } from './components/sql-result-table.tsx'
-import type { AgentTopPanelPlugin } from './features/agent-top-panel-plugin.ts'
-import { arxivTopPanelPlugin } from './features/arxiv-agent/arxiv-top-panel-plugin.tsx'
-import { sqlTopPanelPlugin } from './features/sql-agent/sql-data-panel.tsx'
+import type { AgentDataPanelPlugin } from './features/agent-top-panel-plugin.ts'
+import { arxivDataPanelPlugin } from './features/arxiv-agent/arxiv-top-panel-plugin.tsx'
+import { sqlDataPanelPlugin } from './features/sql-agent/sql-data-panel.tsx'
 import { cn } from './lib/utils.ts'
 import { useEffect, useState } from 'react'
 
@@ -19,7 +19,7 @@ interface AgentPageConfig<TData> {
   apiBasePath: string
   conversationBasePath: string
   title: string
-  topPanelPlugin: AgentTopPanelPlugin<TData>
+  dataPanelPlugin: AgentDataPanelPlugin<TData>
 }
 
 type SqlPageConfig = AgentPageConfig<SqlResultData> & { kind: 'sql' }
@@ -33,7 +33,7 @@ function resolveAgentPage(pathname: string): AnyAgentPageConfig {
       apiBasePath: '/api/v1/arxiv',
       conversationBasePath: '/arxiv',
       title: 'Pydantic AI Arxiv',
-      topPanelPlugin: arxivTopPanelPlugin,
+      dataPanelPlugin: arxivDataPanelPlugin,
     }
   }
 
@@ -42,7 +42,7 @@ function resolveAgentPage(pathname: string): AnyAgentPageConfig {
     apiBasePath: '/api/v1/sql',
     conversationBasePath: '/sql',
     title: 'Pydantic AI SQL',
-    topPanelPlugin: sqlTopPanelPlugin,
+    dataPanelPlugin: sqlDataPanelPlugin,
   }
 }
 
@@ -94,13 +94,13 @@ export default function App() {
                 <Chat
                   apiBasePath={page.apiBasePath}
                   conversationBasePath={page.conversationBasePath}
-                  topPanelPlugin={page.topPanelPlugin}
+                  dataPanelPlugin={page.dataPanelPlugin}
                 />
               ) : (
                 <Chat
                   apiBasePath={page.apiBasePath}
                   conversationBasePath={page.conversationBasePath}
-                  topPanelPlugin={page.topPanelPlugin}
+                  dataPanelPlugin={page.dataPanelPlugin}
                 />
               )}
             </div>

@@ -33,8 +33,8 @@ import { SquarePenIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
-import { AgentChatTopPanelLayout } from '@/components/agent-chat-top-panel-layout'
-import type { AgentTopPanelPlugin } from '@/features/agent-top-panel-plugin'
+import { AgentChatDataPanelLayout } from '@/components/agent-chat-top-panel-layout'
+import type { AgentDataPanelPlugin } from '@/features/agent-top-panel-plugin'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 
@@ -80,31 +80,31 @@ async function getConversationMessages(apiBasePath: string, conversationId: stri
   return (await res.json()) as ChatHistoryResponse
 }
 
-interface ChatProps<TTopPanelData> {
+interface ChatProps<TDataPanelData> {
   apiBasePath: string
   conversationBasePath: string
-  topPanelPlugin: AgentTopPanelPlugin<TTopPanelData>
+  dataPanelPlugin: AgentDataPanelPlugin<TDataPanelData>
 }
 
-const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugin }: ChatProps<TTopPanelData>) => {
+const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlugin }: ChatProps<TDataPanelData>) => {
   const [input, setInput] = useState('')
   const [model, setModel] = useState<string>('')
   const [systemPrompt, setSystemPrompt] = useState<string>('')
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
-  const TopPanelToggleButton = topPanelPlugin.ToggleButton
-  const TopPanelView = topPanelPlugin.TopPanel
+  const DataPanelToggleButton = dataPanelPlugin.ToggleButton
+  const DataPanelView = dataPanelPlugin.DataPanel
   const {
-    data: topPanelData,
-    hasData: hasTopPanelData,
-    showTopPanel,
+    data: dataPanelData,
+    hasData: hasDataPanelData,
+    showDataPanel,
     onDataPart,
     hydrateFromMessages,
-    toggleTopPanel,
-    closeTopPanel,
-    resetTopPanel,
-  } = topPanelPlugin.useTopPanelController()
+    toggleDataPanel,
+    closeDataPanel,
+    resetDataPanel,
+  } = dataPanelPlugin.useDataPanelController()
   const [conversationId, setConversationId] = useConversationIdFromUrl(conversationBasePath)
   const chatApi = conversationId ? `${apiBasePath}/chat/${conversationId}` : `${apiBasePath}/chat/__pending__`
   const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
@@ -148,7 +148,7 @@ const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugi
     async function loadConversation() {
       if (!conversationId) {
         setMessages([])
-        resetTopPanel()
+        resetDataPanel()
         return
       }
 
@@ -162,7 +162,7 @@ const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugi
         console.error('Error loading conversation:', error)
         if (!disposed) {
           setMessages([])
-          resetTopPanel()
+          resetDataPanel()
         }
       }
     }
@@ -175,11 +175,11 @@ const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugi
     return () => {
       disposed = true
     }
-  }, [apiBasePath, conversationId, hydrateFromMessages, resetTopPanel, setMessages])
+  }, [apiBasePath, conversationId, hydrateFromMessages, resetDataPanel, setMessages])
 
   useEffect(() => {
-    resetTopPanel()
-  }, [conversationId, resetTopPanel])
+    resetDataPanel()
+  }, [conversationId, resetDataPanel])
 
   const sendTextMessage = (text: string) => {
     sendMessage(
@@ -347,7 +347,11 @@ const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugi
                   </PromptInputModelSelectContent>
                 </PromptInputModelSelect>
               )}
-              <TopPanelToggleButton hasData={hasTopPanelData} showTopPanel={showTopPanel} onToggle={toggleTopPanel} />
+              <DataPanelToggleButton
+                hasData={hasDataPanelData}
+                showDataPanel={showDataPanel}
+                onToggle={toggleDataPanel}
+              />
             </PromptInputTools>
             <PromptInputSubmit disabled={!input} status={status} />
           </PromptInputToolbar>
@@ -357,11 +361,12 @@ const Chat = <TTopPanelData,>({ apiBasePath, conversationBasePath, topPanelPlugi
   )
 
   return (
-    <AgentChatTopPanelLayout
-      hasTopPanelData={hasTopPanelData}
-      showTopPanel={showTopPanel}
+    <AgentChatDataPanelLayout
+      hasDataPanelData={hasDataPanelData}
+      showDataPanel={showDataPanel}
+      dataPanelPosition={dataPanelPlugin.dataPanelPosition ?? 'top'}
       chatPane={chatPane}
-      topPanel={topPanelData ? <TopPanelView data={topPanelData} onClose={closeTopPanel} /> : null}
+      dataPanel={dataPanelData ? <DataPanelView data={dataPanelData} onClose={closeDataPanel} /> : null}
     />
   )
 }

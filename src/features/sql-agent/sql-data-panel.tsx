@@ -3,9 +3,9 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SqlResultTable, type SqlResultData } from '@/components/sql-result-table'
 import type {
-  AgentTopPanelPlugin,
-  AgentTopPanelProps,
-  AgentTopPanelToggleButtonProps,
+  AgentDataPanelPlugin,
+  AgentDataPanelProps,
+  AgentDataPanelToggleButtonProps,
 } from '@/features/agent-top-panel-plugin'
 import type { UIMessage } from 'ai'
 import { DatabaseIcon, EyeOffIcon } from 'lucide-react'
@@ -73,16 +73,16 @@ function useSqlDataPanelController() {
   return {
     data,
     hasData: data !== null,
-    showTopPanel: isOpen && data !== null,
+    showDataPanel: isOpen && data !== null,
     onDataPart,
     hydrateFromMessages,
-    toggleTopPanel: toggle,
-    closeTopPanel: close,
-    resetTopPanel: reset,
+    toggleDataPanel: toggle,
+    closeDataPanel: close,
+    resetDataPanel: reset,
   }
 }
 
-function SqlDataToggleButton({ hasData, showTopPanel, onToggle }: AgentTopPanelToggleButtonProps) {
+function SqlDataToggleButton({ hasData, showDataPanel, onToggle }: AgentDataPanelToggleButtonProps) {
   if (!hasData) {
     return null
   }
@@ -92,22 +92,22 @@ function SqlDataToggleButton({ hasData, showTopPanel, onToggle }: AgentTopPanelT
       <TooltipTrigger asChild>
         <PromptInputButton
           type="button"
-          variant={showTopPanel ? 'outline' : 'default'}
-          aria-label={showTopPanel ? 'Hide data' : 'Show data'}
+          variant={showDataPanel ? 'outline' : 'default'}
+          aria-label={showDataPanel ? 'Hide data' : 'Show data'}
           className={
-            showTopPanel ? 'shrink-0' : 'shrink-0 animate-pulse ring-2 ring-primary/40 shadow-md shadow-primary/30'
+            showDataPanel ? 'shrink-0' : 'shrink-0 animate-pulse ring-2 ring-primary/40 shadow-md shadow-primary/30'
           }
           onClick={onToggle}
         >
-          {showTopPanel ? <EyeOffIcon className="size-4" /> : <DatabaseIcon className="size-4" />}
+          {showDataPanel ? <EyeOffIcon className="size-4" /> : <DatabaseIcon className="size-4" />}
         </PromptInputButton>
       </TooltipTrigger>
-      <TooltipContent>{showTopPanel ? 'Hide data' : 'Show data'}</TooltipContent>
+      <TooltipContent>{showDataPanel ? 'Hide data' : 'Show data'}</TooltipContent>
     </Tooltip>
   )
 }
 
-function SqlDataTopPanel({ data, onClose }: AgentTopPanelProps<SqlResultData>) {
+function SqlDataPanel({ data, onClose }: AgentDataPanelProps<SqlResultData>) {
   return (
     <section className="flex h-full min-h-0 flex-col border-b bg-linear-to-b from-background to-muted/20">
       <div className="flex items-start justify-between border-b p-4 gap-3 bg-background/80">
@@ -133,8 +133,9 @@ function SqlDataTopPanel({ data, onClose }: AgentTopPanelProps<SqlResultData>) {
   )
 }
 
-export const sqlTopPanelPlugin: AgentTopPanelPlugin<SqlResultData> = {
-  useTopPanelController: useSqlDataPanelController,
+export const sqlDataPanelPlugin: AgentDataPanelPlugin<SqlResultData> = {
+  useDataPanelController: useSqlDataPanelController,
   ToggleButton: SqlDataToggleButton,
-  TopPanel: SqlDataTopPanel,
+  DataPanel: SqlDataPanel,
+  dataPanelPosition: 'right',
 }

@@ -1,30 +1,33 @@
 import type { UIMessage } from 'ai'
 import type { ComponentType } from 'react'
 
-export interface AgentTopPanelController<TData> {
+export type DataPanelPosition = 'top' | 'right' | 'bottom' | 'left'
+
+export interface AgentDataPanelController<TData> {
   data: TData | null
   hasData: boolean
-  showTopPanel: boolean
+  showDataPanel: boolean
   onDataPart: (part: unknown) => void
   hydrateFromMessages: (messages: UIMessage[]) => void
-  toggleTopPanel: () => void
-  closeTopPanel: () => void
-  resetTopPanel: () => void
+  toggleDataPanel: () => void
+  closeDataPanel: () => void
+  resetDataPanel: () => void
 }
 
-export interface AgentTopPanelToggleButtonProps {
+export interface AgentDataPanelToggleButtonProps {
   hasData: boolean
-  showTopPanel: boolean
+  showDataPanel: boolean
   onToggle: () => void
 }
 
-export interface AgentTopPanelProps<TData> {
+export interface AgentDataPanelProps<TData> {
   data: TData
   onClose: () => void
 }
 
-export interface AgentTopPanelPlugin<TData> {
-  useTopPanelController: () => AgentTopPanelController<TData>
-  ToggleButton: ComponentType<AgentTopPanelToggleButtonProps>
-  TopPanel: ComponentType<AgentTopPanelProps<TData>>
+export interface AgentDataPanelPlugin<TData> {
+  useDataPanelController: () => AgentDataPanelController<TData>
+  ToggleButton: ComponentType<AgentDataPanelToggleButtonProps>
+  DataPanel: ComponentType<AgentDataPanelProps<TData>>
+  dataPanelPosition?: DataPanelPosition
 }
