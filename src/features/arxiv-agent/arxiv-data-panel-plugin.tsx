@@ -14,7 +14,7 @@ export interface ArxivPaperData {
   arxiv_id: string
   title: string
   url: string
-  html_url: string
+  pdf_url: string
 }
 
 interface DataPartEvent {
@@ -32,7 +32,7 @@ function isArxivPaperData(value: unknown): value is ArxivPaperData {
     typeof candidate.arxiv_id === 'string' &&
     typeof candidate.title === 'string' &&
     typeof candidate.url === 'string' &&
-    typeof candidate.html_url === 'string'
+    typeof candidate.pdf_url === 'string'
   )
 }
 
@@ -143,12 +143,14 @@ function ArxivDataPanelView({ data, onClose }: AgentDataPanelProps<ArxivPaperDat
           </a>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-card/80 shadow-sm">
-          <iframe
-            className="size-full"
-            src={data.html_url}
-            title={`Arxiv paper ${data.arxiv_id}`}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-          />
+          <iframe className="size-full" src={data.pdf_url} title={`Arxiv paper ${data.arxiv_id}`}>
+            <p className="p-4 text-sm text-muted-foreground">
+              PDF preview unavailable.{' '}
+              <a className="underline underline-offset-2 hover:text-foreground" href={data.pdf_url}>
+                Open the PDF directly.
+              </a>
+            </p>
+          </iframe>
         </div>
       </div>
     </section>
