@@ -5,6 +5,7 @@ import { SidebarProvider } from './components/ui/sidebar.tsx'
 import { Toaster } from './components/ui/sonner.tsx'
 import type { SqlResultData } from './components/sql-result-table.tsx'
 import type { AgentDataPanelPlugin } from './features/agent-data-panel-plugin.ts'
+import type { ArxivPaperData } from './features/arxiv-agent/arxiv-data-panel-plugin.tsx'
 import { arxivDataPanelPlugin } from './features/arxiv-agent/arxiv-data-panel-plugin.tsx'
 import { sqlDataPanelPlugin } from './features/sql-agent/sql-data-panel.tsx'
 import { cn } from './lib/utils.ts'
@@ -23,7 +24,7 @@ interface AgentPageConfig<TData> {
 }
 
 type SqlPageConfig = AgentPageConfig<SqlResultData> & { kind: 'sql' }
-type ArxivPageConfig = AgentPageConfig<null> & { kind: 'arxiv' }
+type ArxivPageConfig = AgentPageConfig<ArxivPaperData> & { kind: 'arxiv' }
 type AnyAgentPageConfig = SqlPageConfig | ArxivPageConfig
 
 function resolveAgentPage(pathname: string): AnyAgentPageConfig {
