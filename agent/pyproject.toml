@@ -6,6 +6,7 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "duckdb>=1.4.4",
     "fastapi>=0.117.1",
+    "httpx>=0.28.1",
     "logfire[fastapi,starlette]>=4.9.0",
     "polars>=1.38.1",
     "pyarrow>=23.0.1",
