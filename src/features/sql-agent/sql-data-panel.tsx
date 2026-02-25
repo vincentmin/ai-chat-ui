@@ -2,6 +2,11 @@ import { PromptInputButton } from '@/components/ai-elements/prompt-input'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SqlResultTable, type SqlResultData } from '@/components/sql-result-table'
+import type {
+  AgentTopPanelPlugin,
+  AgentTopPanelProps,
+  AgentTopPanelToggleButtonProps,
+} from '@/features/agent-top-panel-plugin'
 import type { UIMessage } from 'ai'
 import { DatabaseIcon, EyeOffIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
@@ -34,7 +39,7 @@ function getLatestSqlResult(messages: UIMessage[]): SqlResultData | null {
   return null
 }
 
-export function useSqlDataPanel() {
+function useSqlDataPanelController() {
   const [data, setData] = useState<SqlResultData | null>(null)
   const [isOpen, setIsOpen] = useState(false)
 
@@ -68,23 +73,16 @@ export function useSqlDataPanel() {
   return {
     data,
     hasData: data !== null,
-    isOpen,
     showTopPanel: isOpen && data !== null,
     onDataPart,
     hydrateFromMessages,
-    toggle,
-    close,
-    reset,
+    toggleTopPanel: toggle,
+    closeTopPanel: close,
+    resetTopPanel: reset,
   }
 }
 
-interface SqlDataToggleButtonProps {
-  hasData: boolean
-  isOpen: boolean
-  onToggle: () => void
-}
-
-export function SqlDataToggleButton({ hasData, isOpen, onToggle }: SqlDataToggleButtonProps) {
+function SqlDataToggleButton({ hasData, showTopPanel, onToggle }: AgentTopPanelToggleButtonProps) {
   if (!hasData) {
     return null
   }
@@ -94,25 +92,22 @@ export function SqlDataToggleButton({ hasData, isOpen, onToggle }: SqlDataToggle
       <TooltipTrigger asChild>
         <PromptInputButton
           type="button"
-          variant={isOpen ? 'outline' : 'default'}
-          aria-label={isOpen ? 'Hide data' : 'Show data'}
-          className={isOpen ? 'shrink-0' : 'shrink-0 animate-pulse ring-2 ring-primary/40 shadow-md shadow-primary/30'}
+          variant={showTopPanel ? 'outline' : 'default'}
+          aria-label={showTopPanel ? 'Hide data' : 'Show data'}
+          className={
+            showTopPanel ? 'shrink-0' : 'shrink-0 animate-pulse ring-2 ring-primary/40 shadow-md shadow-primary/30'
+          }
           onClick={onToggle}
         >
-          {isOpen ? <EyeOffIcon className="size-4" /> : <DatabaseIcon className="size-4" />}
+          {showTopPanel ? <EyeOffIcon className="size-4" /> : <DatabaseIcon className="size-4" />}
         </PromptInputButton>
       </TooltipTrigger>
-      <TooltipContent>{isOpen ? 'Hide data' : 'Show data'}</TooltipContent>
+      <TooltipContent>{showTopPanel ? 'Hide data' : 'Show data'}</TooltipContent>
     </Tooltip>
   )
 }
 
-interface SqlDataTopPanelProps {
-  data: SqlResultData
-  onClose: () => void
-}
-
-export function SqlDataTopPanel({ data, onClose }: SqlDataTopPanelProps) {
+function SqlDataTopPanel({ data, onClose }: AgentTopPanelProps<SqlResultData>) {
   return (
     <section className="flex h-full min-h-0 flex-col border-b bg-linear-to-b from-background to-muted/20">
       <div className="flex items-start justify-between border-b p-4 gap-3 bg-background/80">
@@ -136,4 +131,10 @@ export function SqlDataTopPanel({ data, onClose }: SqlDataTopPanelProps) {
       </div>
     </section>
   )
+}
+
+export const sqlTopPanelPlugin: AgentTopPanelPlugin<SqlResultData> = {
+  useTopPanelController: useSqlDataPanelController,
+  ToggleButton: SqlDataToggleButton,
+  TopPanel: SqlDataTopPanel,
 }

@@ -34,7 +34,7 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react
 
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatTopPanelLayout } from '@/components/agent-chat-top-panel-layout'
-import { SqlDataToggleButton, SqlDataTopPanel, useSqlDataPanel } from '@/features/sql-agent/sql-data-panel'
+import { sqlTopPanelPlugin } from '@/features/sql-agent/sql-data-panel'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 
@@ -87,16 +87,19 @@ const Chat = () => {
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
+  const topPanelPlugin = sqlTopPanelPlugin
+  const TopPanelToggleButton = topPanelPlugin.ToggleButton
+  const TopPanelView = topPanelPlugin.TopPanel
   const {
-    data: sqlPanelData,
-    hasData: hasSqlData,
+    data: topPanelData,
+    hasData: hasTopPanelData,
     showTopPanel,
     onDataPart,
     hydrateFromMessages,
-    toggle: toggleSqlPanel,
-    close: closeSqlPanel,
-    reset: resetSqlPanel,
-  } = useSqlDataPanel()
+    toggleTopPanel,
+    closeTopPanel,
+    resetTopPanel,
+  } = topPanelPlugin.useTopPanelController()
   const [conversationId, setConversationId] = useConversationIdFromUrl()
   const chatApi = conversationId ? `/api/chat/${conversationId}` : '/api/chat/__pending__'
   const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
@@ -140,7 +143,7 @@ const Chat = () => {
     async function loadConversation() {
       if (!conversationId) {
         setMessages([])
-        resetSqlPanel()
+        resetTopPanel()
         return
       }
 
@@ -154,7 +157,7 @@ const Chat = () => {
         console.error('Error loading conversation:', error)
         if (!disposed) {
           setMessages([])
-          resetSqlPanel()
+          resetTopPanel()
         }
       }
     }
@@ -167,11 +170,11 @@ const Chat = () => {
     return () => {
       disposed = true
     }
-  }, [conversationId, hydrateFromMessages, resetSqlPanel, setMessages])
+  }, [conversationId, hydrateFromMessages, resetTopPanel, setMessages])
 
   useEffect(() => {
-    resetSqlPanel()
-  }, [conversationId, resetSqlPanel])
+    resetTopPanel()
+  }, [conversationId, resetTopPanel])
 
   const sendTextMessage = (text: string) => {
     sendMessage(
@@ -339,7 +342,7 @@ const Chat = () => {
                   </PromptInputModelSelectContent>
                 </PromptInputModelSelect>
               )}
-              <SqlDataToggleButton hasData={hasSqlData} isOpen={showTopPanel} onToggle={toggleSqlPanel} />
+              <TopPanelToggleButton hasData={hasTopPanelData} showTopPanel={showTopPanel} onToggle={toggleTopPanel} />
             </PromptInputTools>
             <PromptInputSubmit disabled={!input} status={status} />
           </PromptInputToolbar>
@@ -350,10 +353,10 @@ const Chat = () => {
 
   return (
     <AgentChatTopPanelLayout
-      hasTopPanelData={hasSqlData}
+      hasTopPanelData={hasTopPanelData}
       showTopPanel={showTopPanel}
       chatPane={chatPane}
-      topPanel={sqlPanelData ? <SqlDataTopPanel data={sqlPanelData} onClose={closeSqlPanel} /> : null}
+      topPanel={topPanelData ? <TopPanelView data={topPanelData} onClose={closeTopPanel} /> : null}
     />
   )
 }
