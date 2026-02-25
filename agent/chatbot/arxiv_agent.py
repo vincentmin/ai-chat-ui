@@ -103,7 +103,7 @@ async def search(query: str) -> list[dict[str, str]]:
 
 @agent.tool_plain
 def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
-    """Provide a paper PDF to the model as document content."""
+    """Use this tool to read the full pdf for an arxiv paper."""
     normalized_id = _normalize_arxiv_id(arxiv_id)
     if not normalized_id:
         raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
@@ -121,7 +121,8 @@ def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
 
 @agent.tool_plain
 def display_paper(arxiv_id: str) -> pydantic_ai.ToolReturn:
-    """Send a paper preview payload so the frontend can render a PDF iframe panel."""
+    """Send a paper preview payload to the user.
+    The frontend renders a PDF iframe panel."""
     resolved_id = _normalize_arxiv_id(arxiv_id)
     if not resolved_id:
         raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
