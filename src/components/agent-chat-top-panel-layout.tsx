@@ -30,7 +30,7 @@ export function AgentChatTopPanelLayout({
     if (showTopPanel) {
       panel.expand()
       if (panel.getSize().asPercentage < 20) {
-        panel.resize(40)
+        panel.resize('40%')
       }
       return
     }
@@ -44,14 +44,20 @@ export function AgentChatTopPanelLayout({
 
   return (
     <ResizablePanelGroup orientation="vertical" className="h-full min-h-0">
-      <ResizablePanel panelRef={topPanelRef} defaultSize={40} minSize={20} collapsedSize={0} collapsible>
+      <ResizablePanel
+        panelRef={topPanelRef}
+        defaultSize={showTopPanel ? '40%' : '0%'}
+        minSize="20%"
+        collapsedSize="0%"
+        collapsible
+      >
         {showTopPanel ? topPanel : null}
       </ResizablePanel>
       <ResizableHandle
         withHandle={showTopPanel}
         className={showTopPanel ? 'bg-border/80' : 'opacity-0 pointer-events-none'}
       />
-      <ResizablePanel defaultSize={60} minSize={35}>
+      <ResizablePanel defaultSize={showTopPanel ? '60%' : '100%'} minSize="35%">
         {chatPane}
       </ResizablePanel>
     </ResizablePanelGroup>
