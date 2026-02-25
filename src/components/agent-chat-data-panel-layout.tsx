@@ -1,7 +1,7 @@
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { useEffect, useRef, type ReactNode } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
-import type { DataPanelPosition } from '@/features/agent-top-panel-plugin'
+import type { DataPanelPosition } from '@/features/agent-data-panel-plugin'
 
 interface AgentChatDataPanelLayoutProps {
   hasDataPanelData: boolean
@@ -83,5 +83,3 @@ export function AgentChatDataPanelLayout({
     </ResizablePanelGroup>
   )
 }
-
-export const AgentChatTopPanelLayout = AgentChatDataPanelLayout

@@ -6,7 +6,7 @@ import type {
   AgentDataPanelPlugin,
   AgentDataPanelProps,
   AgentDataPanelToggleButtonProps,
-} from '@/features/agent-top-panel-plugin'
+} from '@/features/agent-data-panel-plugin'
 import type { UIMessage } from 'ai'
 import { DatabaseIcon, EyeOffIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'

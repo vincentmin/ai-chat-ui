@@ -1,4 +1,4 @@
-import type { AgentDataPanelPlugin } from '@/features/agent-top-panel-plugin'
+import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
 import type { UIMessage } from 'ai'
 import { useCallback } from 'react'
 

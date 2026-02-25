@@ -33,8 +33,8 @@ import { SquarePenIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
-import { AgentChatDataPanelLayout } from '@/components/agent-chat-top-panel-layout'
-import type { AgentDataPanelPlugin } from '@/features/agent-top-panel-plugin'
+import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
+import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
 
