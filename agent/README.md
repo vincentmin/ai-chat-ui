@@ -4,6 +4,12 @@
 
 Make sure you have `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` set in your environment variables.
 
+Start Redis (requires [Docker](https://docs.docker.com/get-started/get-docker/)):
+
+```bash
+docker compose up -d redis
+```
+
 Run the agent backend + pre-packaged frontend:
 
 ```bash

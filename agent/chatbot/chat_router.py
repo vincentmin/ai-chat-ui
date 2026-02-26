@@ -2,12 +2,13 @@ from __future__ import annotations as _annotations
 
 import logging
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, TypeAdapter
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
@@ -32,6 +33,7 @@ from sqlmodel import select
 from .db import AgentRunSnapshot, ChatRun, ChatRunStatus
 from .db.json_types import JsonValue
 from .db.runtime import DatabaseRuntime
+from .settings import AppSettings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
 from .tasks.run_agent_task import run_agent_task
 
@@ -51,6 +53,10 @@ class ConfigureFrontend(BaseModel, alias_generator=to_camel, populate_by_name=Tr
     models: list[ModelInfo]
     can_override_system_prompt: bool
     default_system_prompt: str | None
+
+
+class HealthResponse(BaseModel, alias_generator=to_camel, populate_by_name=True):
+    ok: bool
 
 
 class ChatRequestExtra(
@@ -88,6 +94,14 @@ class ConversationsResponse(
     populate_by_name=True,
 ):
     conversations: list[ConversationSummary]
+
+
+class DeleteChatResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    ok: bool
 
 
 class ChatMessagesResponse(
@@ -263,35 +277,22 @@ def create_chat_router(
         return Response()
 
     @router.post('/chat')
-    async def create_conversation() -> JSONResponse:
+    async def create_conversation() -> CreateConversationResponse:
         payload = CreateConversationResponse(id=str(uuid4()))
-        return JSONResponse(payload.model_dump(by_alias=True))
+        return payload
 
     @router.get('/configure')
-    async def configure_frontend() -> JSONResponse:
+    async def configure_frontend() -> ConfigureFrontend:
         config = ConfigureFrontend(
             models=model_infos,
             can_override_system_prompt=can_override_system_prompt,
             default_system_prompt=default_system_prompt,
         )
-        return JSONResponse(config.model_dump(by_alias=True))
+        return config
 
     @router.get('/health')
-    async def health(request: Request) -> JSONResponse:
-        settings = getattr(request.app.state, 'settings', None)
-        redis_runtime = getattr(request.app.state, 'redis_runtime', None)
-        return JSONResponse(
-            {
-                'ok': True,
-                'profile': str(getattr(settings, 'profile', 'unknown')),
-                'redisBackend': (
-                    'redislite'
-                    if getattr(redis_runtime, 'redislite_client', None)
-                    else 'redis'
-                ),
-                'redisUrl': getattr(redis_runtime, 'redis_url', None),
-            }
-        )
+    async def health(request: Request) -> HealthResponse:
+        return HealthResponse(ok=True)
 
     @router.post('/chat/{conversation_id}')
     async def post_chat(request: Request, conversation_id: str) -> Response:
@@ -300,89 +301,82 @@ def create_chat_router(
         extra_data = ChatRequestExtra.model_validate(run_input.__pydantic_extra__)
 
         if extra_data.model and extra_data.model not in model_ids:
-            return JSONResponse(
-                {
-                    'error': (
-                        f'Model "{extra_data.model}" is not in the allowed models list'
-                    )
-                },
+            raise HTTPException(
                 status_code=400,
+                detail=f'Model "{extra_data.model}" is not in the allowed models list',
             )
 
         if extra_data.system_prompt and not can_override_system_prompt:
-            return JSONResponse(
-                {'error': 'System prompt override is not available for this agent'},
+            raise HTTPException(
                 status_code=400,
+                detail='System prompt override is not available for this agent',
             )
 
-        redis_runtime = getattr(request.app.state, 'redis_runtime', None)
+        settings: AppSettings | None = getattr(request.app.state, 'settings', None)
+        if not isinstance(settings, AppSettings):
+            raise HTTPException(
+                status_code=503, detail='Application settings unavailable'
+            )
         db_runtime = getattr(request.app.state, 'db_runtime', None)
         if not isinstance(db_runtime, DatabaseRuntime):
-            return JSONResponse(
-                {'error': 'Database runtime unavailable'},
-                status_code=503,
-            )
-        redis_url = getattr(redis_runtime, 'redis_url', None)
+            raise HTTPException(status_code=503, detail='Database runtime unavailable')
+        redis_url = settings.redis_url
         if not isinstance(redis_url, str) or not redis_url:
-            return JSONResponse(
-                {'error': 'Redis runtime unavailable'},
-                status_code=503,
-            )
+            raise HTTPException(status_code=503, detail='Redis runtime unavailable')
 
         active_statuses = {
             ChatRunStatus.QUEUED.value,
             ChatRunStatus.RUNNING.value,
         }
-        run_id: str
-        should_enqueue = False
+
+        # POST always means a new user message — supersede any stale active runs
+        # so they don't block the new enqueue.
         with db_runtime.session() as session:
-            active_runs = session.exec(
+            stale_runs = session.exec(
                 select(ChatRun).where(
                     ChatRun.conversation_id == conversation_id,
                     ChatRun.agent_key == agent_key,
                 )
             ).all()
+            for stale in stale_runs:
+                if stale.status in active_statuses:
+                    stale.status = ChatRunStatus.FAILED.value
+                    stale.error = 'superseded by new message'
+                    stale.updated_at = datetime.now(UTC)
+                    session.add(stale)
+            session.commit()
 
-            current_run = max(
-                (run for run in active_runs if run.status in active_statuses),
-                key=lambda run: run.updated_at,
-                default=None,
-            )
-
-            if current_run is None:
-                run_id = str(uuid4())
-                current_run = ChatRun(
+        run_id = str(uuid4())
+        with db_runtime.session() as session:
+            session.add(
+                ChatRun(
                     run_id=run_id,
                     conversation_id=conversation_id,
                     agent_key=agent_key,
                     status=ChatRunStatus.QUEUED.value,
                 )
-                session.add(current_run)
-                session.commit()
-                should_enqueue = True
-            else:
-                run_id = current_run.run_id
-
-        if should_enqueue:
-            task = await run_agent_task.kiq(
-                run_id=run_id,
-                conversation_id=conversation_id,
-                agent_key=agent_key,
-                request_body=raw_body.decode('utf-8'),
-                selected_model=extra_data.model,
-                system_prompt=(
-                    extra_data.system_prompt if can_override_system_prompt else None
-                ),
             )
+            session.commit()
 
-            with db_runtime.session() as session:
-                run = session.exec(
-                    select(ChatRun).where(ChatRun.run_id == run_id)
-                ).one_or_none()
-                if run is not None:
-                    run.task_id = task.task_id
-                    session.add(run)
-                    session.commit()
+        task = await run_agent_task.kiq(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            agent_key=agent_key,
+            request_body=raw_body.decode('utf-8'),
+            selected_model=extra_data.model,
+            system_prompt=(
+                extra_data.system_prompt if can_override_system_prompt else None
+            ),
+        )
+
+        with db_runtime.session() as session:
+            run = session.exec(
+                select(ChatRun).where(ChatRun.run_id == run_id)
+            ).one_or_none()
+            if run is not None:
+                run.task_id = task.task_id
+                session.add(run)
+                session.commit()
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
@@ -424,11 +418,10 @@ def create_chat_router(
         )
 
     @router.get('/chats')
-    async def list_chats(request: Request) -> JSONResponse:
+    async def list_chats(request: Request) -> ConversationsResponse:
         db_runtime = getattr(request.app.state, 'db_runtime', None)
         if not isinstance(db_runtime, DatabaseRuntime):
-            payload = ConversationsResponse(conversations=[])
-            return JSONResponse(payload.model_dump(by_alias=True))
+            return ConversationsResponse(conversations=[])
 
         with db_runtime.session() as session:
             snapshots = session.exec(
@@ -458,17 +451,13 @@ def create_chat_router(
             key=lambda summary: summary.timestamp,
             reverse=True,
         )
-        payload = ConversationsResponse(conversations=sorted_summaries)
-        return JSONResponse(payload.model_dump(by_alias=True))
+        return ConversationsResponse(conversations=sorted_summaries)
 
     @router.delete('/chat/{conversation_id}')
-    async def delete_chat(conversation_id: str, request: Request) -> JSONResponse:
+    async def delete_chat(conversation_id: str, request: Request) -> DeleteChatResponse:
         db_runtime = getattr(request.app.state, 'db_runtime', None)
         if not isinstance(db_runtime, DatabaseRuntime):
-            return JSONResponse(
-                {'ok': False, 'error': 'Database runtime unavailable'},
-                status_code=503,
-            )
+            raise HTTPException(status_code=503, detail='Database runtime unavailable')
 
         with db_runtime.session() as session:
             snapshots = session.exec(
@@ -481,6 +470,6 @@ def create_chat_router(
                 session.delete(snapshot)
             session.commit()
 
-        return JSONResponse({'ok': True})
+        return DeleteChatResponse(ok=True)
 
     return router

@@ -14,7 +14,6 @@ from .db.runtime import DatabaseRuntime
 from .settings import get_settings
 from .sql_agent import agent as sql_agent
 from .tasks.broker import broker as taskiq_broker
-from .tasks.broker import get_redis_runtime
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
 # have logfire configured
@@ -32,19 +31,16 @@ if not models:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    redis_runtime = get_redis_runtime()
     db_runtime = DatabaseRuntime(settings.resolved_database_url)
     db_runtime.startup()
     await taskiq_broker.startup()
     app.state.settings = settings
-    app.state.redis_runtime = redis_runtime
     app.state.db_runtime = db_runtime
     try:
         yield
     finally:
         await taskiq_broker.shutdown()
         db_runtime.shutdown()
-        redis_runtime.shutdown()
 
 
 app = FastAPI(title='AI Chat API', lifespan=lifespan)

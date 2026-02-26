@@ -15,14 +15,17 @@ Built with [Vercel AI SDK](https://sdk.vercel.ai/) and designed to work with Pyd
 
 ## Development
 
+Requires [Docker](https://docs.docker.com/get-started/get-docker/) for Redis.
+
 ```sh
 pnpm install
-pnpm run dev:full    # start frontend + backend + Taskiq worker together
+pnpm run dev:full    # start Redis (Docker) + frontend + backend + Taskiq worker
 
 # or run each service separately:
-pnpm run dev:server  # start the Python backend (requires agent/ setup)
-pnpm run dev:worker  # start the Taskiq worker
-pnpm run dev         # start the Vite dev server
+docker compose up -d redis  # start Redis
+pnpm run dev:server          # start the Python backend (requires agent/ setup)
+pnpm run dev:worker          # start the Taskiq worker
+pnpm run dev                 # start the Vite dev server
 ```
 
 ## License
