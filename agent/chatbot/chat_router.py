@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, TypeAdapter
@@ -33,7 +33,8 @@ from sqlmodel import select
 from .db import AgentRunSnapshot, ChatRun, ChatRunStatus
 from .db.json_types import JsonValue
 from .db.runtime import DatabaseRuntime
-from .settings import AppSettings
+from .lifespan import get_db_runtime
+from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
 from .tasks.run_agent_task import run_agent_task
 
@@ -295,7 +296,12 @@ def create_chat_router(
         return HealthResponse(ok=True)
 
     @router.post('/chat/{conversation_id}')
-    async def post_chat(request: Request, conversation_id: str) -> Response:
+    async def post_chat(
+        request: Request,
+        conversation_id: str,
+        settings: AppSettings = Depends(get_settings),
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> StreamingResponse:
         raw_body = await request.body()
         run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
         extra_data = ChatRequestExtra.model_validate(run_input.__pydantic_extra__)
@@ -312,14 +318,6 @@ def create_chat_router(
                 detail='System prompt override is not available for this agent',
             )
 
-        settings: AppSettings | None = getattr(request.app.state, 'settings', None)
-        if not isinstance(settings, AppSettings):
-            raise HTTPException(
-                status_code=503, detail='Application settings unavailable'
-            )
-        db_runtime = getattr(request.app.state, 'db_runtime', None)
-        if not isinstance(db_runtime, DatabaseRuntime):
-            raise HTTPException(status_code=503, detail='Database runtime unavailable')
         redis_url = settings.redis_url
         if not isinstance(redis_url, str) or not redis_url:
             raise HTTPException(status_code=503, detail='Redis runtime unavailable')
@@ -402,11 +400,11 @@ def create_chat_router(
         )
 
     @router.get('/chat/{conversation_id}')
-    async def get_chat(conversation_id: str, request: Request) -> ChatMessagesResponse:
-        db_runtime = getattr(request.app.state, 'db_runtime', None)
-        if not isinstance(db_runtime, DatabaseRuntime):
-            return ChatMessagesResponse(messages=[])
-
+    async def get_chat(
+        conversation_id: str,
+        request: Request,
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> ChatMessagesResponse:
         latest_snapshot = _latest_snapshot(db_runtime, conversation_id, agent_key)
         if latest_snapshot is None:
             return ChatMessagesResponse(messages=[])
@@ -418,11 +416,10 @@ def create_chat_router(
         )
 
     @router.get('/chats')
-    async def list_chats(request: Request) -> ConversationsResponse:
-        db_runtime = getattr(request.app.state, 'db_runtime', None)
-        if not isinstance(db_runtime, DatabaseRuntime):
-            return ConversationsResponse(conversations=[])
-
+    async def list_chats(
+        request: Request,
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> ConversationsResponse:
         with db_runtime.session() as session:
             snapshots = session.exec(
                 select(AgentRunSnapshot).where(AgentRunSnapshot.agent_key == agent_key)
@@ -454,11 +451,11 @@ def create_chat_router(
         return ConversationsResponse(conversations=sorted_summaries)
 
     @router.delete('/chat/{conversation_id}')
-    async def delete_chat(conversation_id: str, request: Request) -> DeleteChatResponse:
-        db_runtime = getattr(request.app.state, 'db_runtime', None)
-        if not isinstance(db_runtime, DatabaseRuntime):
-            raise HTTPException(status_code=503, detail='Database runtime unavailable')
-
+    async def delete_chat(
+        conversation_id: str,
+        request: Request,
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> DeleteChatResponse:
         with db_runtime.session() as session:
             snapshots = session.exec(
                 select(AgentRunSnapshot).where(
