@@ -22,6 +22,7 @@
     "dev": "BACKEND_PORT=38001 vite",
     "dev:server": "cd agent && uv run --env-file=../.env.local uvicorn chatbot.server:app --port 38001 --reload",
     "dev:worker": "cd agent && uv run --env-file=../.env.local taskiq worker chatbot.tasks.worker:broker",
+    "dev:full": "concurrently --kill-others-on-fail --names frontend,server,worker --prefix-colors blue,green,magenta \"pnpm run dev\" \"pnpm run dev:server\" \"pnpm run dev:worker\"",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lefthook": "npx lefthook run pre-commit --all-files"
