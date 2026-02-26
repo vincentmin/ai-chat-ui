@@ -2,13 +2,15 @@
 
 ## Objective
 
-Move the chatbot application to a backend-persistent, task-queue-based architecture that supports long-running Pydantic AI agents, resumable streaming, and environment-specific infrastructure (SQLite/InMemoryBroker in development, PostgreSQL/Redis in production).
+Move the chatbot application to a backend-persistent, task-queue-based architecture that supports long-running Pydantic AI agents, resumable streaming, and environment-specific infrastructure (SQLite/Redis in development, PostgreSQL/Redis in production).
 
 ## Agreed Decisions (2026-02-23)
 
 1. Canonical chat endpoint shape is `/chat/{id}`.
 2. Canonical persisted conversation state is `AgentRunResult` snapshots, not stored `UIMessage[]` arrays.
 3. The backend generates conversation IDs for new chats and the frontend navigates to `/chat/{id}` before sending messages.
+4. Taskiq broker backend is Redis in both development and production.
+5. Development Redis defaults to in-process `redislite` (or `REDIS_URL` override), while production requires managed `REDIS_URL`.
 
 ### Persistence Implication
 
@@ -40,7 +42,7 @@ Move the chatbot application to a backend-persistent, task-queue-based architect
 
 6. Integrate Taskiq application topology
 
-   Introduce a dedicated Taskiq setup with separate API and worker roles. Configure InMemoryBroker for local development and Redis broker for production so long-running agent execution is decoupled from request lifetimes.
+   Introduce a dedicated Taskiq setup with separate API and worker roles. Configure Redis broker for both local development and production so long-running agent execution is decoupled from request lifetimes and behavior is consistent across environments.
 
 7. Implement background task for agent execution
 
@@ -77,11 +79,11 @@ Keep `useChat`, Vercel AI Elements, and shadcn components for rendering and inte
 
 7. Implement reliability controls for long-running tasks
 
-   Add timeout policy, retry strategy, cancellation behavior, deduplication safeguards, and status tracking for queued/running/completed/failed states. This prevents duplicate runs and improves operational predictability.
+   Add timeout policy, retry strategy, cancellation behavior, deduplication safeguards, and status tracking for queued/running/completed/failed states. Start with strict idempotency and retries disabled by default, then enable bounded retries after deduplication proves stable in tests. This prevents duplicate runs and improves operational predictability.
 
 8. Add local developer workflow and tooling
 
-   Provide a frictionless local setup path using SQLite + InMemoryBroker by default, and an optional Docker Compose profile for Redis and PostgreSQL integration testing. Document startup order for API, worker, and frontend services.
+   Provide a frictionless local setup path using SQLite + Redis by default (backed by `redislite` unless `REDIS_URL` is set), and an optional Docker Compose profile for external Redis and PostgreSQL integration testing. Document startup order for API, worker, and frontend services.
 
 9. Expand observability and diagnostics
 
@@ -101,7 +103,7 @@ Keep `useChat`, Vercel AI Elements, and shadcn components for rendering and inte
 - Message history is persisted and sourced from backend storage (derived from persisted `AgentRunResult`).
 - SQLModel is the ORM with SQLite in development and PostgreSQL in production.
 - Taskiq executes long-running agent work outside request threads.
-- Development uses InMemoryBroker; production uses Redis broker.
+- Development and production both use Redis broker (development defaults to `redislite`).
 - Agent stream events are captured in workers and published to Redis streams.
 - `POST /chat/{id}` triggers processing and streams output to the client.
 - `GET /chat/{id}` returns conversation history derived from backend persistence.

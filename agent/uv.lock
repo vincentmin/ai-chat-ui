@@ -745,6 +745,7 @@ dependencies = [
     { name = "redislite" },
     { name = "sqlmodel" },
     { name = "taskiq-fastapi" },
+    { name = "taskiq-redis" },
     { name = "uvicorn" },
 ]
 
@@ -769,6 +770,7 @@ requires-dist = [
     { name = "redislite", specifier = ">=6.2.912183" },
     { name = "sqlmodel", specifier = ">=0.0.37" },
     { name = "taskiq-fastapi", specifier = ">=0.4.0" },
+    { name = "taskiq-redis", specifier = ">=1.1.2" },
     { name = "uvicorn", specifier = ">=0.37.0" },
 ]
 
@@ -1793,6 +1795,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cf/fe/f9e885a4dd6bd4d4224e3dee05d9b38bf58102a0ef5e553e812d654dfa72/taskiq_fastapi-0.4.0.tar.gz", hash = "sha256:f683ab0aab1ab2db117d1e121e5e534f3ba4a4e5f382177012e29eca986863fb", size = 5819 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/58/11eacc48d615703618f93ff44812409dca94cb465ab5cb173a8a90e079b1/taskiq_fastapi-0.4.0-py3-none-any.whl", hash = "sha256:9e7e57fa337b4fad2641c8761cafc7b54a63bf7bf726423a28fc2b15c55fd0bc", size = 5369 },
+]
+
+[[package]]
+name = "taskiq-redis"
+version = "1.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "redis" },
+    { name = "taskiq" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d2/0b/5006792cbdf6e78abaab45407968d96e2a1ffd0238cd41b13a62b33880cf/taskiq_redis-1.1.2.tar.gz", hash = "sha256:f878a047abc1a0fa0ddda6e4b063d742f030858d5a4409de96261a00a992c9c9", size = 16225 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/20/9bf19b05eb7cb275a04871f3c38bf088c108579c4c19ea2a1358d2a81334/taskiq_redis-1.1.2-py3-none-any.whl", hash = "sha256:3b69468ff99da33243314c84acfa137a4a014abad10dd44e62195bc5e4ae9947", size = 20424 },
 ]
 
 [[package]]

@@ -18,6 +18,7 @@ Built with [Vercel AI SDK](https://sdk.vercel.ai/) and designed to work with Pyd
 ```sh
 pnpm install
 pnpm run dev:server  # start the Python backend (requires agent/ setup)
+pnpm run dev:worker  # start the Taskiq worker
 pnpm run dev         # start the Vite dev server
 ```
 

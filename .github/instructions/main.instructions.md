@@ -48,8 +48,8 @@ If you expect or encounter any linting or formatting issues, consider running `p
   - Must be idempotent and safe to resume/retry for the same chat/run identifiers.
 - **Broker/Stream Transport**
   - Owns decoupled delivery between API and worker runtimes.
-  - In development: InMemoryBroker for queueing semantics with minimal setup.
-  - In production: Redis for broker + stream transport and resumable event consumption.
+  - In development: Redis (defaulting to in-process redislite) for queueing and stream transport.
+  - In production: Managed Redis for broker + stream transport and resumable event consumption.
 - **Database (SQLModel-backed)**
   - Owns durable chat state, message parts, run metadata, and processing status.
   - SQLite is the local development default; PostgreSQL is the production default.
@@ -70,7 +70,7 @@ If you expect or encounter any linting or formatting issues, consider running `p
   - `production`: inferred when `REDIS_URL` is provided or when `APP_ENV=production` is explicitly set.
 - Redis transport:
   - `production` requires `REDIS_URL` and must connect to managed Redis.
-  - `development` uses in-process `redislite` and derives a runtime Redis URL from its unix socket.
+  - `development` defaults to in-process `redislite` and derives a runtime Redis URL from its unix socket unless `REDIS_URL` is provided.
 - Keep environment-sensitive infrastructure decisions (database URL, broker backend, stream transport) in backend settings modules, not in frontend code.
 
 ### Frontend Structure
@@ -115,8 +115,7 @@ If you expect or encounter any linting or formatting issues, consider running `p
 - SQLModel is used as the ORM for chat persistence.
 - Development database is SQLite.
 - Production database is PostgreSQL.
-- Taskiq broker uses InMemoryBroker in development.
-- Taskiq broker uses Redis in production.
+- Taskiq broker uses Redis in development and production.
 - Worker tasks publish ordered agent output events to Redis streams keyed by chat/session.
 
 ### Backend Integration
@@ -149,5 +148,5 @@ If you expect or encounter any linting or formatting issues, consider running `p
 - Vercel AI Elements and shadcn/ui
 - Radix UI primitives
 - FastAPI, Pydantic AI, SQLModel, Taskiq
-- SQLite (development), PostgreSQL (production), Redis (production broker and stream transport)
+- SQLite (development), PostgreSQL (production), Redis (development and production broker/stream transport)
 - ESLint (neostandard), Prettier

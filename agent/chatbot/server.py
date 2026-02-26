@@ -1,4 +1,4 @@
-from __future__ import annotations as _annotations
+from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,8 +11,10 @@ from fastapi.responses import Response, StreamingResponse
 from . import arxiv_agent as arxiv_agent_module
 from .chat_router import create_chat_router
 from .db.runtime import DatabaseRuntime
-from .settings import RedisRuntime, get_settings
+from .settings import get_settings
 from .sql_agent import agent as sql_agent
+from .tasks.broker import broker as taskiq_broker
+from .tasks.broker import get_redis_runtime
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
 # have logfire configured
@@ -30,16 +32,17 @@ if not models:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    redis_runtime = RedisRuntime(settings)
+    redis_runtime = get_redis_runtime()
     db_runtime = DatabaseRuntime(settings.resolved_database_url)
-    redis_runtime.startup()
     db_runtime.startup()
+    await taskiq_broker.startup()
     app.state.settings = settings
     app.state.redis_runtime = redis_runtime
     app.state.db_runtime = db_runtime
     try:
         yield
     finally:
+        await taskiq_broker.shutdown()
         db_runtime.shutdown()
         redis_runtime.shutdown()
 

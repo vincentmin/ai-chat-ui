@@ -8,6 +8,7 @@ import redislite
 from pydantic import Field, computed_field, model_validator
 from pydantic_ai.models import KnownModelName
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from redis.connection import UnixDomainSocketConnection
 
 
 class RuntimeProfile(StrEnum):
@@ -20,6 +21,7 @@ class AppSettings(BaseSettings):
 
     app_env: RuntimeProfile | None = Field(default=None, alias='APP_ENV')
     redis_url: str | None = Field(default=None, alias='REDIS_URL')
+    taskiq_queue_name: str = Field(default='chatbot-runs', alias='TASKIQ_QUEUE_NAME')
     redislite_dir: Path = Field(default=Path('.data/redislite'), alias='REDISLITE_DIR')
     database_url: str | None = Field(default=None, alias='DATABASE_URL')
     sqlite_db_path: Path = Field(
@@ -76,6 +78,19 @@ class AppSettings(BaseSettings):
 
         return models
 
+    @computed_field
+    @property
+    def taskiq_redis_url(self) -> str:
+        """Resolve the Redis URL used by Taskiq.
+
+        In production, REDIS_URL is required and returned directly.
+        In development, this value is filled after RedisRuntime starts redislite.
+        """
+        if self.redis_url:
+            return self.redis_url
+        # Development fallback; runtime startup computes and exports REDIS_URL.
+        return os.environ.get('REDIS_URL', '')
+
     def has_any_model_key(self) -> bool:
         return bool(self.available_models())
 
@@ -92,6 +107,11 @@ class RedisRuntime:
         if self.settings.profile == RuntimeProfile.PRODUCTION:
             self.redis_url = self.settings.redis_url
             return
+
+        # redislite + redis-py compatibility: ensure unix socket connections have a
+        # default port attribute so logging paths don't crash.
+        if not hasattr(UnixDomainSocketConnection, 'port'):
+            UnixDomainSocketConnection.port = 0  # type: ignore[attr-defined]
 
         self.settings.redislite_dir.mkdir(parents=True, exist_ok=True)
         db_path = self.settings.redislite_dir / 'redis.db'

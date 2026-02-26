@@ -16,6 +16,7 @@ dependencies = [
     "redislite>=6.2.912183",
     "sqlmodel>=0.0.37",
     "taskiq-fastapi>=0.4.0",
+    "taskiq-redis>=1.1.2",
     "uvicorn>=0.37.0",
 ]
 

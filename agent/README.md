@@ -12,6 +12,13 @@ uv sync
 uv run --env-file=../.env.local uvicorn chatbot.server:app
 ```
 
+Start the Taskiq worker in a separate terminal:
+
+```bash
+cd agent
+uv run --env-file=../.env.local taskiq worker chatbot.tasks.worker:broker
+```
+
 Then open your browser to `http://localhost:8000`.
 
 ### Frontend development

@@ -7,11 +7,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, TypeAdapter
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
-from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -30,9 +29,11 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 )
 from sqlmodel import select
 
-from .db import AgentRunSnapshot, to_json_value
+from .db import AgentRunSnapshot, ChatRun, ChatRunStatus
 from .db.json_types import JsonValue
 from .db.runtime import DatabaseRuntime
+from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
+from .tasks.run_agent_task import run_agent_task
 
 logger = logging.getLogger(__name__)
 
@@ -294,13 +295,9 @@ def create_chat_router(
 
     @router.post('/chat/{conversation_id}')
     async def post_chat(request: Request, conversation_id: str) -> Response:
-        adapter = await VercelAIAdapter[Any, Any].from_request(
-            request,
-            agent=agent,
-        )
-        extra_data = ChatRequestExtra.model_validate(
-            adapter.run_input.__pydantic_extra__
-        )
+        raw_body = await request.body()
+        run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
+        extra_data = ChatRequestExtra.model_validate(run_input.__pydantic_extra__)
 
         if extra_data.model and extra_data.model not in model_ids:
             return JSONResponse(
@@ -318,40 +315,96 @@ def create_chat_router(
                 status_code=400,
             )
 
-        model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
-        instructions = extra_data.system_prompt if can_override_system_prompt else None
-
+        redis_runtime = getattr(request.app.state, 'redis_runtime', None)
         db_runtime = getattr(request.app.state, 'db_runtime', None)
-
-        async def on_complete(result: AgentRunResult[Any]) -> None:
-            if not isinstance(db_runtime, DatabaseRuntime):
-                logger.warning(
-                    'db_runtime is not available; skipping AgentRunResult persistence'
-                )
-                return
-
-            snapshot_agent_key = extra_data.agent_key or agent_key
-
-            try:
-                with db_runtime.session() as session:
-                    session.add(
-                        AgentRunSnapshot(
-                            conversation_id=conversation_id,
-                            run_id=result.run_id,
-                            agent_key=snapshot_agent_key,
-                            model_messages_json=to_json_value(result.all_messages()),
-                        )
-                    )
-                    session.commit()
-            except Exception:
-                logger.exception('Failed to persist AgentRunResult snapshot')
-
-        return adapter.streaming_response(
-            adapter.run_stream(
-                model=model_ref,
-                instructions=instructions,
-                on_complete=on_complete,
+        if not isinstance(db_runtime, DatabaseRuntime):
+            return JSONResponse(
+                {'error': 'Database runtime unavailable'},
+                status_code=503,
             )
+        redis_url = getattr(redis_runtime, 'redis_url', None)
+        if not isinstance(redis_url, str) or not redis_url:
+            return JSONResponse(
+                {'error': 'Redis runtime unavailable'},
+                status_code=503,
+            )
+
+        active_statuses = {
+            ChatRunStatus.QUEUED.value,
+            ChatRunStatus.RUNNING.value,
+        }
+        run_id: str
+        should_enqueue = False
+        with db_runtime.session() as session:
+            active_runs = session.exec(
+                select(ChatRun).where(
+                    ChatRun.conversation_id == conversation_id,
+                    ChatRun.agent_key == agent_key,
+                )
+            ).all()
+
+            current_run = max(
+                (run for run in active_runs if run.status in active_statuses),
+                key=lambda run: run.updated_at,
+                default=None,
+            )
+
+            if current_run is None:
+                run_id = str(uuid4())
+                current_run = ChatRun(
+                    run_id=run_id,
+                    conversation_id=conversation_id,
+                    agent_key=agent_key,
+                    status=ChatRunStatus.QUEUED.value,
+                )
+                session.add(current_run)
+                session.commit()
+                should_enqueue = True
+            else:
+                run_id = current_run.run_id
+
+        if should_enqueue:
+            task = await run_agent_task.kiq(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                agent_key=agent_key,
+                request_body=raw_body.decode('utf-8'),
+                selected_model=extra_data.model,
+                system_prompt=(
+                    extra_data.system_prompt if can_override_system_prompt else None
+                ),
+            )
+
+            with db_runtime.session() as session:
+                run = session.exec(
+                    select(ChatRun).where(ChatRun.run_id == run_id)
+                ).one_or_none()
+                if run is not None:
+                    run.task_id = task.task_id
+                    session.add(run)
+                    session.commit()
+
+        stream_key = chat_run_stream_key(
+            agent_key=agent_key,
+            conversation_id=conversation_id,
+            run_id=run_id,
+        )
+
+        async def stream_response() -> Any:
+            async for kind, payload in iter_stream_events(
+                redis_url,
+                stream_key,
+                start_id='0-0',
+            ):
+                if kind == 'chunk' and payload:
+                    yield payload
+                if kind == 'terminal':
+                    break
+
+        return StreamingResponse(
+            stream_response(),
+            media_type='text/event-stream',
+            headers={'x-vercel-ai-ui-message-stream': 'v1'},
         )
 
     @router.get('/chat/{conversation_id}')
