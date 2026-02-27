@@ -25,6 +25,7 @@ from .db.runtime import DatabaseRuntime
 from .db.service import (
     create_chat_run,
     delete_chat_records,
+    get_active_run,
     get_latest_snapshot,
     get_latest_snapshot_per_conversation,
     supersede_stale_runs,
@@ -168,9 +169,14 @@ def _build_model_options(
     return model_id_to_ref, model_infos
 
 
-async def _relay_stream(redis_url: str, stream_key: str) -> AsyncIterator[str]:
+async def _relay_stream(
+    redis_url: str,
+    stream_key: str,
+    *,
+    start_id: str = '0-0',
+) -> AsyncIterator[str]:
     async for kind, payload in iter_stream_events(
-        redis_url, stream_key, start_id='0-0'
+        redis_url, stream_key, start_id=start_id
     ):
         if kind == 'chunk' and payload:
             yield payload
@@ -279,6 +285,37 @@ def create_chat_router(
 
         return StreamingResponse(
             _relay_stream(redis_url, stream_key),
+            media_type='text/event-stream',
+            headers={'x-vercel-ai-ui-message-stream': 'v1'},
+        )
+
+    @router.get('/chat/{conversation_id}/stream')
+    async def stream_chat(
+        conversation_id: str,
+        settings: AppSettings = Depends(get_settings),
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> Response:
+        redis_url = settings.redis_url
+        if not isinstance(redis_url, str) or not redis_url:
+            raise HTTPException(status_code=503, detail='Redis runtime unavailable')
+
+        with db_runtime.session() as session:
+            active_run = get_active_run(session, conversation_id, agent_key)
+            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+
+        if active_run is None or active_run.run_id is None:
+            return Response(status_code=204)
+
+        if latest_snapshot is not None and latest_snapshot.run_id == active_run.run_id:
+            return Response(status_code=204)
+
+        stream_key = chat_run_stream_key(
+            agent_key=agent_key,
+            conversation_id=conversation_id,
+            run_id=active_run.run_id,
+        )
+        return StreamingResponse(
+            _relay_stream(redis_url, stream_key, start_id='0-0'),
             media_type='text/event-stream',
             headers={'x-vercel-ai-ui-message-stream': 'v1'},
         )

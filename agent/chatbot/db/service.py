@@ -83,6 +83,21 @@ def get_latest_snapshot_per_conversation(
     return latest
 
 
+def get_active_run(
+    session: Session, conversation_id: str, agent_key: str
+) -> ChatRun | None:
+    """Return the most recent QUEUED or RUNNING ChatRun for a conversation, or None."""
+    active_statuses = {ChatRunStatus.QUEUED.value, ChatRunStatus.RUNNING.value}
+    runs = session.exec(
+        select(ChatRun).where(
+            ChatRun.conversation_id == conversation_id,
+            ChatRun.agent_key == agent_key,
+        )
+    ).all()
+    active = [r for r in runs if r.status in active_statuses]
+    return max(active, key=lambda r: r.created_at) if active else None
+
+
 def delete_chat_records(session: Session, conversation_id: str, agent_key: str) -> None:
     """Delete all AgentRunSnapshot records for a conversation."""
     snapshots = session.exec(

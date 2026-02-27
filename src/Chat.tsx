@@ -27,17 +27,16 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
 import { SquarePenIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
 import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
+import { useConversationChatState } from './hooks/useConversationChatState'
 import { Part } from './Part'
-import { getConfig, getConversationMessages } from '@/lib/api'
+import { getConfig } from '@/lib/api'
 import { useChatSubmit } from '@/hooks/useChatSubmit'
 
 interface ChatProps<TDataPanelData> {
@@ -64,12 +63,12 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
     resetDataPanel,
   } = dataPanelPlugin.useDataPanelController()
   const [conversationId, setConversationId] = useConversationIdFromUrl(conversationBasePath)
-  const chatApi = conversationId ? `${apiBasePath}/chat/${conversationId}` : `${apiBasePath}/chat/__pending__`
-  const transport = useMemo(() => new DefaultChatTransport({ api: chatApi }), [chatApi])
-  const { messages, sendMessage, status, setMessages, regenerate, error } = useChat({
-    id: conversationId ?? undefined,
-    transport,
+
+  const { messages, sendMessage, status, regenerate, error } = useConversationChatState({
+    apiBasePath,
+    conversationId,
     onData: onDataPart,
+    hydrateFromMessages,
     onFinish: ({ isAbort, isDisconnect, isError }) => {
       if (conversationId && !isAbort && !isDisconnect && !isError) {
         window.dispatchEvent(new Event('conversations-changed'))
@@ -85,28 +84,17 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
   const model = selectedModel ?? configQuery.data?.models[0]?.id ?? ''
   const systemPrompt = systemPromptOverride ?? configQuery.data?.defaultSystemPrompt ?? ''
 
-  const messagesQuery = useQuery({
-    queryKey: ['conversation', apiBasePath, conversationId],
-    queryFn: () => getConversationMessages(apiBasePath, conversationId!),
-    enabled: !!conversationId,
-  })
-
   useEffect(() => {
     if (isPromptDialogOpen) {
       setSystemPromptDraft(systemPrompt)
     }
   }, [isPromptDialogOpen, systemPrompt])
 
-  // Sync query result into useChat state
   useEffect(() => {
-    if (conversationId && messagesQuery.data) {
-      setMessages(messagesQuery.data.messages)
-      hydrateFromMessages(messagesQuery.data.messages)
-    } else if (!conversationId) {
-      setMessages([])
+    if (!conversationId) {
       resetDataPanel()
     }
-  }, [messagesQuery.data, conversationId, hydrateFromMessages, resetDataPanel, setMessages])
+  }, [conversationId, resetDataPanel])
 
   // Focus the textarea when the active conversation changes
   useEffect(() => {
