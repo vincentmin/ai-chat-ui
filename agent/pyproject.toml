@@ -55,8 +55,18 @@ python-version = "3.12"
 [tool.ty.terminal]
 output-format = "concise"
 
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+pythonpath = [
+    ".",
+]
+
 [dependency-groups]
 dev = [
+    "pytest>=8.4.2",
+    "pytest-anyio>=0.0.0",
     "ruff>=0.15.2",
     "ty>=0.0.18",
 ]

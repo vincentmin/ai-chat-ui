@@ -11,6 +11,10 @@ const BACKEND_DEV_SERVER_PORT = process.env.BACKEND_PORT ?? 38001
 export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss(), tsconfigPaths({ root: __dirname })],
   base: command === 'build' ? 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui/dist/' : '',
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
   build: {
     assetsDir: 'assets',
   },
