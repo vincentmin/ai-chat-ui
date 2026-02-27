@@ -17,25 +17,25 @@ interface PartProps {
   lastMessage: boolean
 }
 
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function copy(text: string) {
+  navigator.clipboard.writeText(text).catch((error: unknown) => {
+    console.error('Error copying text:', error)
+  })
+}
+
 export function Part({ part, message, status, regen, index, lastMessage }: PartProps) {
-  function parseMaybeJson(value: unknown): unknown {
-    if (typeof value !== 'string') {
-      return value
-    }
-
-    try {
-      return JSON.parse(value)
-    } catch {
-      return value
-    }
-  }
-
-  function copy(text: string) {
-    navigator.clipboard.writeText(text).catch((error: unknown) => {
-      console.error('Error copying text:', error)
-    })
-  }
-
   if (part.type === 'text') {
     return (
       <div className="py-4">

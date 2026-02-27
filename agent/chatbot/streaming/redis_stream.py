@@ -15,32 +15,26 @@ def chat_run_stream_key(*, agent_key: str, conversation_id: str, run_id: str) ->
     return f'chat:stream:{agent_key}:{conversation_id}:{run_id}'
 
 
-async def publish_chunk(redis_url: str, stream_key: str, encoded_chunk: str) -> None:
-    client = redis.from_url(redis_url, decode_responses=True)
-    try:
-        await client.xadd(
-            stream_key,
-            {
-                STREAM_FIELD_KIND: STREAM_KIND_CHUNK,
-                STREAM_FIELD_EVENT: encoded_chunk,
-            },
-        )
-    finally:
-        await client.aclose()
+async def publish_chunk(
+    client: redis.Redis, stream_key: str, encoded_chunk: str
+) -> None:
+    await client.xadd(
+        stream_key,
+        {
+            STREAM_FIELD_KIND: STREAM_KIND_CHUNK,
+            STREAM_FIELD_EVENT: encoded_chunk,
+        },
+    )
 
 
-async def publish_terminal(redis_url: str, stream_key: str) -> None:
-    client = redis.from_url(redis_url, decode_responses=True)
-    try:
-        await client.xadd(
-            stream_key,
-            {
-                STREAM_FIELD_KIND: STREAM_KIND_TERMINAL,
-                STREAM_FIELD_EVENT: '',
-            },
-        )
-    finally:
-        await client.aclose()
+async def publish_terminal(client: redis.Redis, stream_key: str) -> None:
+    await client.xadd(
+        stream_key,
+        {
+            STREAM_FIELD_KIND: STREAM_KIND_TERMINAL,
+            STREAM_FIELD_EVENT: '',
+        },
+    )
 
 
 async def iter_stream_events(

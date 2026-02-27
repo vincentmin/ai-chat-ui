@@ -13,7 +13,7 @@ ARXIV_PDF_BASE_URL = 'https://arxiv.org/pdf/'
 ATOM_NS = {'atom': 'http://www.w3.org/2005/Atom'}
 
 
-def _normalize_arxiv_id(arxiv_id: str) -> str:
+def normalize_arxiv_id(arxiv_id: str) -> str:
     normalized_id = arxiv_id.strip()
 
     if normalized_id.startswith('http://') or normalized_id.startswith('https://'):
@@ -25,7 +25,7 @@ def _normalize_arxiv_id(arxiv_id: str) -> str:
     return normalized_id
 
 
-def _pdf_url(arxiv_id: str) -> str:
+def pdf_url(arxiv_id: str) -> str:
     return f'{ARXIV_PDF_BASE_URL}{arxiv_id}.pdf'
 
 
@@ -85,7 +85,7 @@ async def search(query: str) -> list[dict[str, str]]:
         ).strip()
 
         arxiv_id = raw_id.rsplit('/', maxsplit=1)[-1] if raw_id else ''
-        pdf_url = _pdf_url(arxiv_id) if arxiv_id else ''
+        _pdf_url = pdf_url(arxiv_id) if arxiv_id else ''
 
         results.append(
             {
@@ -94,7 +94,7 @@ async def search(query: str) -> list[dict[str, str]]:
                 'abstract': ' '.join(abstract.split()),
                 'published': published,
                 'url': raw_id or _abs_url(arxiv_id),
-                'pdf_url': pdf_url,
+                'pdf_url': _pdf_url,
             }
         )
 
@@ -104,7 +104,7 @@ async def search(query: str) -> list[dict[str, str]]:
 @agent.tool_plain
 def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
     """Use this tool to read the full pdf for an arxiv paper."""
-    normalized_id = _normalize_arxiv_id(arxiv_id)
+    normalized_id = normalize_arxiv_id(arxiv_id)
     if not normalized_id:
         raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
 
@@ -112,7 +112,7 @@ def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
         return_value=f'Loaded PDF for Arxiv paper {normalized_id}',
         content=[
             pydantic_ai.DocumentUrl(
-                url=_pdf_url(normalized_id),
+                url=pdf_url(normalized_id),
                 media_type='application/pdf',
             )
         ],
@@ -123,7 +123,7 @@ def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
 def display_paper(arxiv_id: str) -> pydantic_ai.ToolReturn:
     """Send a paper preview payload to the user.
     The frontend renders a PDF iframe panel."""
-    resolved_id = _normalize_arxiv_id(arxiv_id)
+    resolved_id = normalize_arxiv_id(arxiv_id)
     if not resolved_id:
         raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
 

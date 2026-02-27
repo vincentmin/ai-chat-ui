@@ -46,33 +46,34 @@ app.include_router(
 )
 
 
+async def _stream_arxiv_pdf(pdf_url: str) -> AsyncIterator[bytes]:
+    try:
+        async with (
+            httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client,
+            client.stream('GET', pdf_url) as upstream,
+        ):
+            upstream.raise_for_status()
+            async for chunk in upstream.aiter_bytes(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f'Failed to fetch arXiv PDF: {e}',
+        ) from e
+
+
 @app.get('/api/v1/arxiv/paper/{arxiv_id:path}/pdf')
 async def arxiv_pdf_proxy(arxiv_id: str) -> Response:
-    normalized_id = arxiv_agent_module._normalize_arxiv_id(arxiv_id)
+    normalized_id = arxiv_agent_module.normalize_arxiv_id(arxiv_id)
     if not normalized_id:
         raise HTTPException(status_code=400, detail='Invalid arXiv id')
 
-    pdf_url = arxiv_agent_module._pdf_url(normalized_id)
-
-    async def stream_pdf() -> AsyncIterator[bytes]:
-        try:
-            async with (
-                httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client,
-                client.stream('GET', pdf_url) as upstream,
-            ):
-                upstream.raise_for_status()
-                async for chunk in upstream.aiter_bytes(chunk_size=64 * 1024):
-                    if chunk:
-                        yield chunk
-        except httpx.HTTPError as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f'Failed to fetch arXiv PDF: {e}',
-            ) from e
+    pdf_url = arxiv_agent_module.pdf_url(normalized_id)
 
     filename = normalized_id.replace('/', '_')
     return StreamingResponse(
-        stream_pdf(),
+        _stream_arxiv_pdf(pdf_url),
         media_type='application/pdf',
         headers={
             'Content-Disposition': f'inline; filename="{filename}.pdf"',

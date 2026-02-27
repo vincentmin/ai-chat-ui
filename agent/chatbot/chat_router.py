@@ -1,38 +1,35 @@
 from __future__ import annotations as _annotations
 
 import logging
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
-from pydantic_ai.ui.vercel_ai.response_types import (
-    DataChunk,
-    FileChunk,
-    SourceDocumentChunk,
-    SourceUrlChunk,
-)
-from sqlmodel import select
 
-from .db import AgentRunSnapshot, ChatRun, ChatRunStatus
-from .db.json_types import JsonValue
+from .db.message_codec import messages_from_json
 from .db.runtime import DatabaseRuntime
+from .db.service import (
+    create_chat_run,
+    delete_chat_records,
+    get_latest_snapshot,
+    get_latest_snapshot_per_conversation,
+    supersede_stale_runs,
+    update_run_task_id,
+)
 from .lifespan import get_db_runtime
 from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
@@ -41,8 +38,6 @@ from .tasks.run_agent_task import run_agent_task
 logger = logging.getLogger(__name__)
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
-MetadataChunk = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
-_metadata_chunk_adapter = TypeAdapter(MetadataChunk)
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -113,85 +108,6 @@ class ChatMessagesResponse(
     messages: list[UIMessage]
 
 
-def _messages_from_json(messages_json: JsonValue) -> list[ModelMessage]:
-    if not isinstance(messages_json, list):
-        return []
-
-    try:
-        messages = ModelMessagesTypeAdapter.validate_python(messages_json)
-        return _rehydrate_tool_return_metadata(messages)
-    except Exception:
-        logger.exception('Failed to deserialize model messages')
-        return []
-
-
-def _rehydrate_metadata_item(value: Any) -> Any:
-    if isinstance(value, (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)):
-        return value
-
-    if not isinstance(value, dict):
-        return value
-
-    chunk_type = value.get('type')
-    if not isinstance(chunk_type, str):
-        return value
-
-    try:
-        return _metadata_chunk_adapter.validate_python(value)
-    except Exception:
-        return value
-
-
-def _rehydrate_tool_return_metadata(messages: list[ModelMessage]) -> list[ModelMessage]:
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
-
-        for part in message.parts:
-            if not isinstance(part, ToolReturnPart):
-                continue
-
-            metadata = part.metadata
-            if isinstance(metadata, list):
-                part.metadata = [_rehydrate_metadata_item(item) for item in metadata]
-            else:
-                part.metadata = _rehydrate_metadata_item(metadata)
-
-    return messages
-
-
-def _latest_model_messages(
-    db_runtime: DatabaseRuntime,
-    conversation_id: str,
-    agent_key: str,
-) -> list[ModelMessage]:
-    latest_snapshot = _latest_snapshot(db_runtime, conversation_id, agent_key)
-
-    if latest_snapshot is None:
-        return []
-
-    return _messages_from_json(latest_snapshot.model_messages_json)
-
-
-def _latest_snapshot(
-    db_runtime: DatabaseRuntime,
-    conversation_id: str,
-    agent_key: str,
-) -> AgentRunSnapshot | None:
-    with db_runtime.session() as session:
-        statement = select(AgentRunSnapshot).where(
-            AgentRunSnapshot.conversation_id == conversation_id,
-            AgentRunSnapshot.agent_key == agent_key,
-        )
-        snapshots = session.exec(statement).all()
-
-    return max(
-        snapshots,
-        key=lambda snapshot: snapshot.created_at,
-        default=None,
-    )
-
-
 def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
     for message in model_messages:
         if not isinstance(message, ModelRequest):
@@ -250,6 +166,16 @@ def _build_model_options(
         add_model(label, model_ref)
 
     return model_id_to_ref, model_infos
+
+
+async def _relay_stream(redis_url: str, stream_key: str) -> AsyncIterator[str]:
+    async for kind, payload in iter_stream_events(
+        redis_url, stream_key, start_id='0-0'
+    ):
+        if kind == 'chunk' and payload:
+            yield payload
+        if kind == 'terminal':
+            break
 
 
 def create_chat_router(
@@ -322,39 +248,14 @@ def create_chat_router(
         if not isinstance(redis_url, str) or not redis_url:
             raise HTTPException(status_code=503, detail='Redis runtime unavailable')
 
-        active_statuses = {
-            ChatRunStatus.QUEUED.value,
-            ChatRunStatus.RUNNING.value,
-        }
-
         # POST always means a new user message — supersede any stale active runs
         # so they don't block the new enqueue.
         with db_runtime.session() as session:
-            stale_runs = session.exec(
-                select(ChatRun).where(
-                    ChatRun.conversation_id == conversation_id,
-                    ChatRun.agent_key == agent_key,
-                )
-            ).all()
-            for stale in stale_runs:
-                if stale.status in active_statuses:
-                    stale.status = ChatRunStatus.FAILED.value
-                    stale.error = 'superseded by new message'
-                    stale.updated_at = datetime.now(UTC)
-                    session.add(stale)
-            session.commit()
+            supersede_stale_runs(session, conversation_id, agent_key)
 
         run_id = str(uuid4())
         with db_runtime.session() as session:
-            session.add(
-                ChatRun(
-                    run_id=run_id,
-                    conversation_id=conversation_id,
-                    agent_key=agent_key,
-                    status=ChatRunStatus.QUEUED.value,
-                )
-            )
-            session.commit()
+            create_chat_run(session, run_id, conversation_id, agent_key)
 
         task = await run_agent_task.kiq(
             run_id=run_id,
@@ -368,13 +269,7 @@ def create_chat_router(
         )
 
         with db_runtime.session() as session:
-            run = session.exec(
-                select(ChatRun).where(ChatRun.run_id == run_id)
-            ).one_or_none()
-            if run is not None:
-                run.task_id = task.task_id
-                session.add(run)
-                session.commit()
+            update_run_task_id(session, run_id, task.task_id)
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
@@ -382,19 +277,8 @@ def create_chat_router(
             run_id=run_id,
         )
 
-        async def stream_response() -> Any:
-            async for kind, payload in iter_stream_events(
-                redis_url,
-                stream_key,
-                start_id='0-0',
-            ):
-                if kind == 'chunk' and payload:
-                    yield payload
-                if kind == 'terminal':
-                    break
-
         return StreamingResponse(
-            stream_response(),
+            _relay_stream(redis_url, stream_key),
             media_type='text/event-stream',
             headers={'x-vercel-ai-ui-message-stream': 'v1'},
         )
@@ -405,11 +289,12 @@ def create_chat_router(
         request: Request,
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> ChatMessagesResponse:
-        latest_snapshot = _latest_snapshot(db_runtime, conversation_id, agent_key)
+        with db_runtime.session() as session:
+            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
         if latest_snapshot is None:
             return ChatMessagesResponse(messages=[])
 
-        model_messages = _messages_from_json(latest_snapshot.model_messages_json)
+        model_messages = messages_from_json(latest_snapshot.model_messages_json)
         ui_messages = VercelAIAdapter[Any, Any].dump_messages(model_messages)
         return ChatMessagesResponse.model_validate(
             {'messages': jsonable_encoder(ui_messages)}
@@ -421,19 +306,13 @@ def create_chat_router(
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> ConversationsResponse:
         with db_runtime.session() as session:
-            snapshots = session.exec(
-                select(AgentRunSnapshot).where(AgentRunSnapshot.agent_key == agent_key)
-            ).all()
-
-        latest_by_conversation: dict[str, AgentRunSnapshot] = {}
-        for snapshot in snapshots:
-            current = latest_by_conversation.get(snapshot.conversation_id)
-            if current is None or snapshot.created_at > current.created_at:
-                latest_by_conversation[snapshot.conversation_id] = snapshot
+            latest_by_conversation = get_latest_snapshot_per_conversation(
+                session, agent_key
+            )
 
         summaries: list[ConversationSummary] = []
         for conversation_id, snapshot in latest_by_conversation.items():
-            messages = _messages_from_json(snapshot.model_messages_json)
+            messages = messages_from_json(snapshot.model_messages_json)
             first_message = _first_user_message_text(messages)
             summaries.append(
                 ConversationSummary(
@@ -457,15 +336,7 @@ def create_chat_router(
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> DeleteChatResponse:
         with db_runtime.session() as session:
-            snapshots = session.exec(
-                select(AgentRunSnapshot).where(
-                    AgentRunSnapshot.conversation_id == conversation_id,
-                    AgentRunSnapshot.agent_key == agent_key,
-                )
-            ).all()
-            for snapshot in snapshots:
-                session.delete(snapshot)
-            session.commit()
+            delete_chat_records(session, conversation_id, agent_key)
 
         return DeleteChatResponse(ok=True)
 

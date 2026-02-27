@@ -28,57 +28,17 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport, type UIMessage } from 'ai'
+import { DefaultChatTransport } from 'ai'
 import { SquarePenIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
 import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
 import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { Part } from './Part'
-
-interface ModelConfig {
-  id: string
-  name: string
-}
-
-interface RemoteConfig {
-  models: ModelConfig[]
-  canOverrideSystemPrompt: boolean
-  defaultSystemPrompt: string | null
-}
-
-interface CreateConversationResponse {
-  id: string
-}
-
-interface ChatHistoryResponse {
-  messages: UIMessage[]
-}
-
-async function getConfig(apiBasePath: string) {
-  const res = await fetch(`${apiBasePath}/configure`)
-  return (await res.json()) as RemoteConfig
-}
-
-async function createConversation(apiBasePath: string) {
-  const res = await fetch(`${apiBasePath}/chat`, {
-    method: 'POST',
-  })
-  if (!res.ok) {
-    throw new Error('Failed to create conversation')
-  }
-  return (await res.json()) as CreateConversationResponse
-}
-
-async function getConversationMessages(apiBasePath: string, conversationId: string) {
-  const res = await fetch(`${apiBasePath}/chat/${conversationId}`)
-  if (!res.ok) {
-    throw new Error('Failed to load conversation')
-  }
-  return (await res.json()) as ChatHistoryResponse
-}
+import { getConfig, getConversationMessages } from '@/lib/api'
+import { useChatSubmit } from '@/hooks/useChatSubmit'
 
 interface ChatProps<TDataPanelData> {
   apiBasePath: string
@@ -87,12 +47,10 @@ interface ChatProps<TDataPanelData> {
 }
 
 const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlugin }: ChatProps<TDataPanelData>) => {
-  const [input, setInput] = useState('')
-  const [model, setModel] = useState<string>('')
-  const [systemPrompt, setSystemPrompt] = useState<string>('')
+  const [selectedModel, setSelectedModel] = useState<string | null>(null)
+  const [systemPromptOverride, setSystemPromptOverride] = useState<string | null>(null)
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const DataPanelToggleButton = dataPanelPlugin.ToggleButton
   const DataPanelView = dataPanelPlugin.DataPanel
   const {
@@ -124,17 +82,14 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
     queryFn: () => getConfig(apiBasePath),
     queryKey: ['chat-config', apiBasePath],
   })
+  const model = selectedModel ?? configQuery.data?.models[0]?.id ?? ''
+  const systemPrompt = systemPromptOverride ?? configQuery.data?.defaultSystemPrompt ?? ''
 
-  useEffect(() => {
-    if (configQuery.data?.models[0]) {
-      setModel(configQuery.data.models[0].id)
-    }
-    if (configQuery.data?.canOverrideSystemPrompt) {
-      const defaultPrompt = configQuery.data.defaultSystemPrompt ?? ''
-      setSystemPrompt(defaultPrompt)
-      setSystemPromptDraft(defaultPrompt)
-    }
-  }, [configQuery.data])
+  const messagesQuery = useQuery({
+    queryKey: ['conversation', apiBasePath, conversationId],
+    queryFn: () => getConversationMessages(apiBasePath, conversationId!),
+    enabled: !!conversationId,
+  })
 
   useEffect(() => {
     if (isPromptDialogOpen) {
@@ -142,90 +97,36 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
     }
   }, [isPromptDialogOpen, systemPrompt])
 
+  // Sync query result into useChat state
   useEffect(() => {
-    let disposed = false
-
-    async function loadConversation() {
-      if (!conversationId) {
-        setMessages([])
-        resetDataPanel()
-        return
-      }
-
-      try {
-        const response = await getConversationMessages(apiBasePath, conversationId)
-        if (!disposed) {
-          setMessages(response.messages)
-          hydrateFromMessages(response.messages)
-        }
-      } catch (error: unknown) {
-        console.error('Error loading conversation:', error)
-        if (!disposed) {
-          setMessages([])
-          resetDataPanel()
-        }
-      }
+    if (conversationId && messagesQuery.data) {
+      setMessages(messagesQuery.data.messages)
+      hydrateFromMessages(messagesQuery.data.messages)
+    } else if (!conversationId) {
+      setMessages([])
+      resetDataPanel()
     }
+  }, [messagesQuery.data, conversationId, hydrateFromMessages, resetDataPanel, setMessages])
 
-    loadConversation().catch((error: unknown) => {
-      console.error('Error loading conversation:', error)
-    })
+  // Focus the textarea when the active conversation changes
+  useEffect(() => {
     textareaRef.current?.focus()
-
-    return () => {
-      disposed = true
-    }
-  }, [apiBasePath, conversationId, hydrateFromMessages, resetDataPanel, setMessages])
+  }, [conversationId])
 
   useEffect(() => {
     resetDataPanel()
   }, [conversationId, resetDataPanel])
 
-  const sendTextMessage = (text: string) => {
-    sendMessage(
-      { text },
-      {
-        body: {
-          model,
-          systemPrompt: configQuery.data?.canOverrideSystemPrompt ? systemPrompt : undefined,
-        },
-      },
-    ).catch((error: unknown) => {
-      console.error('Error sending message:', error)
-    })
-  }
-
-  useEffect(() => {
-    if (!conversationId || !pendingMessage) {
-      return
-    }
-
-    sendTextMessage(pendingMessage)
-    setPendingMessage(null)
-  }, [conversationId, pendingMessage, model, systemPrompt, configQuery.data])
-
-  const handleSubmit = (e: SyntheticEvent) => {
-    e.preventDefault()
-    if (input.trim()) {
-      const submittedText = input
-      setInput('')
-
-      if (!conversationId) {
-        createConversation(apiBasePath)
-          .then((response) => {
-            setConversationId(response.id)
-            setPendingMessage(submittedText)
-            window.dispatchEvent(new Event('conversations-changed'))
-          })
-          .catch((error: unknown) => {
-            console.error('Error creating conversation:', error)
-          })
-        return
-      }
-
-      sendTextMessage(submittedText)
-    }
-  }
+  const { input, setInput, handleSubmit } = useChatSubmit({
+    apiBasePath,
+    conversationId,
+    setConversationId,
+    model,
+    systemPrompt,
+    canOverrideSystemPrompt: configQuery.data?.canOverrideSystemPrompt,
+    sendMessage,
+    configQueryData: configQuery.data,
+  })
 
   function regen(messageId: string) {
     regenerate({ messageId }).catch((error: unknown) => {
@@ -318,7 +219,7 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
                       <Button
                         type="button"
                         onClick={() => {
-                          setSystemPrompt(systemPromptDraft)
+                          setSystemPromptOverride(systemPromptDraft)
                           setIsPromptDialogOpen(false)
                         }}
                       >
@@ -331,7 +232,7 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
               {configQuery.data && model && (
                 <PromptInputModelSelect
                   onValueChange={(value) => {
-                    setModel(value)
+                    setSelectedModel(value)
                   }}
                   value={model}
                 >
