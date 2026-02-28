@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic_ai import Agent
+from pydantic_ai import Agent, models
 from pydantic_ai.models.test import TestModel
 
 os.environ.setdefault('OPENAI_API_KEY', 'test-key')
 
+from chatbot import arxiv_agent as arxiv_agent_module
 from chatbot.chat_router import create_chat_router
 from chatbot.db.runtime import DatabaseRuntime
+from chatbot.sql_agent import agent as sql_agent
+
+cast(Any, models).ALLOW_MODEL_REQUESTS = False
 
 
 @pytest.fixture
@@ -45,3 +50,13 @@ def client(db_runtime: DatabaseRuntime):
 
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def override_project_agents_with_test_model():
+    test_model = TestModel()
+    with (
+        sql_agent.override(model=test_model),
+        arxiv_agent_module.agent.override(model=test_model),
+    ):
+        yield

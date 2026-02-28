@@ -65,8 +65,11 @@ pythonpath = [
 
 [dependency-groups]
 dev = [
+    "dirty-equals>=0.11",
+    "inline-snapshot>=0.32.3",
     "pytest>=8.4.2",
     "pytest-anyio>=0.0.0",
     "ruff>=0.15.2",
+    "testcontainers>=4.14.1",
     "ty>=0.0.18",
 ]
