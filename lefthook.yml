@@ -23,7 +23,7 @@ pre-commit:
       run: uv run --project=agent ty check {staged_files}
     check-yaml:
       glob: "*.{yaml,yml}"
-      run: npx yaml-lint {staged_files}
+      run: pnpm exec yamllint {staged_files}
     check-toml:
       glob: "*.toml"
-      run: npx @taplo/cli check {staged_files}
+      run: pnpm exec taplo check {staged_files}
