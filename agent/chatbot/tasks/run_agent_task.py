@@ -71,6 +71,7 @@ async def run_agent_task(
             agent=agent,
             run_input=run_input,
             accept='text/event-stream',
+            sdk_version=6,
         )
 
         model_ref = resolve_model_ref(agent_key, selected_model)
