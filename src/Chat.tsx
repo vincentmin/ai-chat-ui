@@ -33,7 +33,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
 import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
-import { useConversationIdFromUrl } from './hooks/useConversationIdFromUrl'
 import { useConversationChatState } from './hooks/useConversationChatState'
 import { Part } from './Part'
 import { getConfig } from '@/lib/api'
@@ -41,11 +40,17 @@ import { useChatSubmit } from '@/hooks/useChatSubmit'
 
 interface ChatProps<TDataPanelData> {
   apiBasePath: string
-  conversationBasePath: string
+  conversationId: string | null
+  setConversationId: (id: string | null) => void
   dataPanelPlugin: AgentDataPanelPlugin<TDataPanelData>
 }
 
-const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlugin }: ChatProps<TDataPanelData>) => {
+const Chat = <TDataPanelData,>({
+  apiBasePath,
+  conversationId,
+  setConversationId,
+  dataPanelPlugin,
+}: ChatProps<TDataPanelData>) => {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [systemPromptOverride, setSystemPromptOverride] = useState<string | null>(null)
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
@@ -62,7 +67,6 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
     closeDataPanel,
     resetDataPanel,
   } = dataPanelPlugin.useDataPanelController()
-  const [conversationId, setConversationId] = useConversationIdFromUrl(conversationBasePath)
 
   const { messages, sendMessage, status, regenerate, error } = useConversationChatState({
     apiBasePath,
@@ -108,7 +112,9 @@ const Chat = <TDataPanelData,>({ apiBasePath, conversationBasePath, dataPanelPlu
   const { input, setInput, handleSubmit } = useChatSubmit({
     apiBasePath,
     conversationId,
-    setConversationId,
+    setConversationId: (id) => {
+      setConversationId(id)
+    },
     model,
     systemPrompt,
     canOverrideSystemPrompt: configQuery.data?.canOverrideSystemPrompt,

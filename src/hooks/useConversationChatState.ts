@@ -63,9 +63,16 @@ export function useConversationChatState({
 
   useEffect(() => {
     if (!conversationId) {
+      const hadHydratedConversation = hydratedConversationIdRef.current !== null
+      const hadResumedConversation = resumedConversationIdRef.current !== null
+
       hydratedConversationIdRef.current = null
       resumedConversationIdRef.current = null
-      setMessages([])
+
+      if (hadHydratedConversation || hadResumedConversation) {
+        setMessages([])
+      }
+
       return
     }
 

@@ -26,7 +26,6 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useConversationIdFromUrl } from '@/hooks/useConversationIdFromUrl'
 import { cn } from '@/lib/utils'
 import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
@@ -44,15 +43,12 @@ async function fetchConversations(apiBasePath: string) {
   return (await res.json()) as ConversationsResponse
 }
 
-function doLocalNavigation(e: React.MouseEvent) {
+function shouldHandleLocalNavigation(e: React.MouseEvent) {
   if (e.button !== 0 || e.metaKey || e.ctrlKey) {
-    return
+    return false
   }
-  const path = new URL((e.currentTarget as HTMLAnchorElement).href).pathname
-  window.history.pushState({}, '', path)
-  // custom event to notify other components of the URL change
-  window.dispatchEvent(new Event('history-state-changed'))
-  e.preventDefault()
+
+  return true
 }
 
 async function deleteConversation(apiBasePath: string, conversationId: string) {
@@ -68,16 +64,23 @@ interface AppSidebarProps {
   apiBasePath: string
   conversationBasePath: string
   title: string
+  conversationId: string | null
+  onConversationIdChange: (id: string | null) => void
 }
 
-export function AppSidebar({ apiBasePath, conversationBasePath, title }: AppSidebarProps) {
+export function AppSidebar({
+  apiBasePath,
+  conversationBasePath,
+  title,
+  conversationId,
+  onConversationIdChange,
+}: AppSidebarProps) {
   const [refreshTick, setRefreshTick] = useState(0)
   const conversationsQuery = useQuery({
     queryFn: () => fetchConversations(apiBasePath),
     queryKey: ['conversations', apiBasePath, refreshTick],
   })
   const conversations = conversationsQuery.data?.conversations ?? []
-  const [conversationId] = useConversationIdFromUrl(conversationBasePath)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [conversationToDelete, setConversationToDelete] = useState<ConversationEntry | null>(null)
 
@@ -107,10 +110,8 @@ export function AppSidebar({ apiBasePath, conversationBasePath, title }: AppSide
           setConversationToDelete(null)
           setRefreshTick((value) => value + 1)
 
-          const currentPath = window.location.pathname
-          if (currentPath === `${conversationBasePath}/chat/${conversationToDelete.id}`) {
-            window.history.pushState({}, '', conversationBasePath)
-            window.dispatchEvent(new Event('history-state-changed'))
+          if (conversationId === conversationToDelete.id) {
+            onConversationIdChange(null)
           }
 
           toast.success('Chat deleted successfully')
@@ -140,7 +141,17 @@ export function AppSidebar({ apiBasePath, conversationBasePath, title }: AppSide
             <SidebarMenu className="mb-2">
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Start a new conversation">
-                  <a href={conversationBasePath} onClick={doLocalNavigation}>
+                  <a
+                    href={conversationBasePath}
+                    onClick={(e) => {
+                      if (!shouldHandleLocalNavigation(e)) {
+                        return
+                      }
+
+                      e.preventDefault()
+                      onConversationIdChange(null)
+                    }}
+                  >
                     <CirclePlus />
                     <span>New conversation</span>
                   </a>
@@ -156,7 +167,14 @@ export function AppSidebar({ apiBasePath, conversationBasePath, title }: AppSide
                       <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
                         <a
                           href={`${conversationBasePath}/chat/${conversation.id}`}
-                          onClick={doLocalNavigation}
+                          onClick={(e) => {
+                            if (!shouldHandleLocalNavigation(e)) {
+                              return
+                            }
+
+                            e.preventDefault()
+                            onConversationIdChange(conversation.id)
+                          }}
                           className={cn('h-auto flex items-start gap-2', {
                             'bg-accent pointer-events-none': conversation.id === conversationId,
                           })}
