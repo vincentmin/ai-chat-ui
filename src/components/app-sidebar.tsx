@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -43,14 +44,6 @@ async function fetchConversations(apiBasePath: string) {
   return (await res.json()) as ConversationsResponse
 }
 
-function shouldHandleLocalNavigation(e: React.MouseEvent) {
-  if (e.button !== 0 || e.metaKey || e.ctrlKey) {
-    return false
-  }
-
-  return true
-}
-
 async function deleteConversation(apiBasePath: string, conversationId: string) {
   const res = await fetch(`${apiBasePath}/chat/${conversationId}`, {
     method: 'DELETE',
@@ -75,6 +68,7 @@ export function AppSidebar({
   conversationId,
   onConversationIdChange,
 }: AppSidebarProps) {
+  const isSql = conversationBasePath === '/sql'
   const [refreshTick, setRefreshTick] = useState(0)
   const conversationsQuery = useQuery({
     queryFn: () => fetchConversations(apiBasePath),
@@ -141,20 +135,17 @@ export function AppSidebar({
             <SidebarMenu className="mb-2">
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Start a new conversation">
-                  <a
-                    href={conversationBasePath}
-                    onClick={(e) => {
-                      if (!shouldHandleLocalNavigation(e)) {
-                        return
-                      }
-
-                      e.preventDefault()
-                      onConversationIdChange(null)
-                    }}
-                  >
-                    <CirclePlus />
-                    <span>New conversation</span>
-                  </a>
+                  {isSql ? (
+                    <Link to="/sql">
+                      <CirclePlus />
+                      <span>New conversation</span>
+                    </Link>
+                  ) : (
+                    <Link to="/arxiv">
+                      <CirclePlus />
+                      <span>New conversation</span>
+                    </Link>
+                  )}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -165,28 +156,39 @@ export function AppSidebar({
                   <SidebarMenuItem key={index} className="group/sidebar-menu-item">
                     <div className="flex items-center gap-1 h-auto">
                       <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
-                        <a
-                          href={`${conversationBasePath}/chat/${conversation.id}`}
-                          onClick={(e) => {
-                            if (!shouldHandleLocalNavigation(e)) {
-                              return
-                            }
-
-                            e.preventDefault()
-                            onConversationIdChange(conversation.id)
-                          }}
-                          className={cn('h-auto flex items-start gap-2', {
-                            'bg-accent pointer-events-none': conversation.id === conversationId,
-                          })}
-                        >
-                          <MessageCircle className="size-3 mt-1" />
-                          <span className="flex flex-col items-start">
-                            <span className="truncate max-w-44">{conversation.firstMessage}</span>
-                            <span className="text-xs opacity-30">
-                              {new Date(conversation.timestamp).toLocaleString()}
+                        {isSql ? (
+                          <Link
+                            to="/sql/chat/$conversationId"
+                            params={{ conversationId: conversation.id }}
+                            className={cn('h-auto flex items-start gap-2', {
+                              'bg-accent pointer-events-none': conversation.id === conversationId,
+                            })}
+                          >
+                            <MessageCircle className="size-3 mt-1" />
+                            <span className="flex flex-col items-start">
+                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
+                              <span className="text-xs opacity-30">
+                                {new Date(conversation.timestamp).toLocaleString()}
+                              </span>
                             </span>
-                          </span>
-                        </a>
+                          </Link>
+                        ) : (
+                          <Link
+                            to="/arxiv/chat/$conversationId"
+                            params={{ conversationId: conversation.id }}
+                            className={cn('h-auto flex items-start gap-2', {
+                              'bg-accent pointer-events-none': conversation.id === conversationId,
+                            })}
+                          >
+                            <MessageCircle className="size-3 mt-1" />
+                            <span className="flex flex-col items-start">
+                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
+                              <span className="text-xs opacity-30">
+                                {new Date(conversation.timestamp).toLocaleString()}
+                              </span>
+                            </span>
+                          </Link>
+                        )}
                       </SidebarMenuButton>
                       <Tooltip>
                         <TooltipTrigger asChild>

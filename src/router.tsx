@@ -110,62 +110,66 @@ function ArxivConversationRoutePage() {
   )
 }
 
-const rootRoute = createRootRoute({
-  component: RootLayout,
-})
+export function createAppRouter() {
+  const rootRoute = createRootRoute({
+    component: RootLayout,
+  })
 
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/',
-  beforeLoad: () => redirect({ to: '/sql' }),
-})
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/',
+    beforeLoad: () => redirect({ to: '/sql' }),
+  })
 
-const legacyConversationRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/chat/$conversationId',
-  beforeLoad: ({ params }) =>
-    redirect({
-      to: '/sql/chat/$conversationId',
-      params: { conversationId: params.conversationId },
-    }),
-})
+  const legacyConversationRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/chat/$conversationId',
+    beforeLoad: ({ params }) =>
+      redirect({
+        to: '/sql/chat/$conversationId',
+        params: { conversationId: params.conversationId },
+      }),
+  })
 
-const sqlRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/sql',
-  component: SqlRoutePage,
-})
+  const sqlRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/sql',
+    component: SqlRoutePage,
+  })
 
-const sqlConversationRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/sql/chat/$conversationId',
-  component: SqlConversationRoutePage,
-})
+  const sqlConversationRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/sql/chat/$conversationId',
+    component: SqlConversationRoutePage,
+  })
 
-const arxivRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/arxiv',
-  component: ArxivRoutePage,
-})
+  const arxivRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/arxiv',
+    component: ArxivRoutePage,
+  })
 
-const arxivConversationRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/arxiv/chat/$conversationId',
-  component: ArxivConversationRoutePage,
-})
+  const arxivConversationRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/arxiv/chat/$conversationId',
+    component: ArxivConversationRoutePage,
+  })
 
-const routeTree = rootRoute.addChildren([
-  indexRoute,
-  legacyConversationRoute,
-  sqlRoute,
-  sqlConversationRoute,
-  arxivRoute,
-  arxivConversationRoute,
-])
+  const routeTree = rootRoute.addChildren([
+    indexRoute,
+    legacyConversationRoute,
+    sqlRoute,
+    sqlConversationRoute,
+    arxivRoute,
+    arxivConversationRoute,
+  ])
 
-export const router = createRouter({
-  routeTree,
-})
+  return createRouter({
+    routeTree,
+  })
+}
+
+export const router = createAppRouter()
 
 declare module '@tanstack/react-router' {
   interface Register {

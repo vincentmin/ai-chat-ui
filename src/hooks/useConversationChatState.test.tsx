@@ -4,8 +4,10 @@ import type { Mock } from 'vitest'
 
 import { useConversationChatState } from './useConversationChatState'
 
-const useQueryMock: Mock = vi.fn()
-const useChatMock: Mock = vi.fn()
+const { useQueryMock, useChatMock } = vi.hoisted(() => ({
+  useQueryMock: vi.fn(),
+  useChatMock: vi.fn(),
+})) as { useQueryMock: Mock; useChatMock: Mock }
 
 vi.mock('@tanstack/react-query', () => ({
   useQuery: useQueryMock,
@@ -53,7 +55,7 @@ describe('useConversationChatState', () => {
 
     const hydrateFromMessages = vi.fn()
 
-    const { rerender } = renderHook(
+    const { rerender } = renderHook<ReturnType<typeof useConversationChatState>, { conversationId: string | null }>(
       ({ conversationId }: { conversationId: string | null }) =>
         useConversationChatState({
           apiBasePath: '/api/v1/sql',
@@ -78,12 +80,12 @@ describe('useConversationChatState', () => {
     expect(resumeStream).toHaveBeenCalledTimes(1)
   })
 
-  it('clears messages when conversation is unset', () => {
+  it('clears messages when conversation transitions to unset', () => {
     const setMessages = vi.fn()
 
     useQueryMock.mockReturnValue({
       data: undefined,
-      isFetched: false,
+      isFetched: true,
       isLoading: false,
     })
 
@@ -101,15 +103,21 @@ describe('useConversationChatState', () => {
       addToolResult: vi.fn(),
     })
 
-    renderHook(() =>
-      useConversationChatState({
-        apiBasePath: '/api/v1/sql',
-        conversationId: null,
-        onData: vi.fn(),
-        onFinish: vi.fn(),
-        hydrateFromMessages: vi.fn(),
-      }),
+    const { rerender } = renderHook<ReturnType<typeof useConversationChatState>, { conversationId: string | null }>(
+      ({ conversationId }: { conversationId: string | null }) =>
+        useConversationChatState({
+          apiBasePath: '/api/v1/sql',
+          conversationId,
+          onData: vi.fn(),
+          onFinish: vi.fn(),
+          hydrateFromMessages: vi.fn(),
+        }),
+      {
+        initialProps: { conversationId: 'conversation-1' },
+      },
     )
+
+    rerender({ conversationId: '' })
 
     expect(setMessages).toHaveBeenCalledWith([])
   })
