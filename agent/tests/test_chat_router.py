@@ -12,6 +12,7 @@ from sqlmodel import select
 from chatbot.chat_router import (
     _build_model_options,
     _first_user_message_text,
+    _normalize_tool_part_states,
     _string_instructions_or_none,
 )
 from chatbot.db import JsonValue, to_json_value
@@ -182,3 +183,61 @@ def test_delete_chat_endpoint_removes_conversation_snapshots(
 
     assert len(remaining) == 1
     assert remaining[0].conversation_id == 'conversation-keep'
+
+
+def test_normalize_tool_part_states_handles_approval_states() -> None:
+    payload = {
+        'messages': [
+            {
+                'id': 'assistant-1',
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool-query',
+                        'toolCallId': 'call-1',
+                        'state': 'approval-responded',
+                        'input': {'sql_query': 'select 1'},
+                        'approval': {'id': 'approval-1', 'approved': True},
+                    },
+                    {
+                        'type': 'dynamic-tool',
+                        'toolName': 'custom',
+                        'toolCallId': 'call-2',
+                        'state': 'output-denied',
+                        'input': {'foo': 'bar'},
+                        'approval': {'id': 'approval-2', 'approved': False},
+                    },
+                ],
+            }
+        ]
+    }
+
+    normalized = _normalize_tool_part_states(json.dumps(payload).encode('utf-8'))
+    normalized_payload = json.loads(normalized)
+    parts = normalized_payload['messages'][0]['parts']
+
+    assert parts[0]['state'] == 'input-available'
+    assert parts[1]['state'] == 'input-available'
+
+
+def test_normalize_tool_part_states_leaves_other_states_unchanged() -> None:
+    payload = {
+        'messages': [
+            {
+                'id': 'assistant-1',
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool-query',
+                        'toolCallId': 'call-1',
+                        'state': 'input-available',
+                        'input': {'sql_query': 'select 1'},
+                    }
+                ],
+            }
+        ]
+    }
+
+    body = json.dumps(payload).encode('utf-8')
+    normalized = _normalize_tool_part_states(body)
+    assert normalized == body

@@ -5,6 +5,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from sqlmodel import select
 
 from chatbot.db.models import AgentRunSnapshot, ChatRun, ChatRunStatus
@@ -20,6 +27,95 @@ class _FakeRedisClient:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_filter_deferred_tool_results_matches_last_model_response_calls() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='query',
+                    tool_call_id='call-old',
+                    args={'sql_query': 'select 1'},
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='query',
+                    tool_call_id='call-latest',
+                    args={'sql_query': 'select 2'},
+                )
+            ]
+        ),
+    ]
+    deferred_tool_results = DeferredToolResults(
+        approvals={
+            'call-old': True,
+            'call-latest': True,
+        }
+    )
+
+    filtered = run_agent_task_module._filter_deferred_tool_results(
+        messages,
+        deferred_tool_results,
+    )
+
+    assert filtered is not None
+    assert filtered.approvals == {'call-latest': True}
+
+
+def test_filter_deferred_tool_results_returns_none_when_no_expected_calls() -> None:
+    filtered = run_agent_task_module._filter_deferred_tool_results(
+        messages=[],
+        deferred_tool_results=DeferredToolResults(approvals={'call-old': True}),
+    )
+
+    assert filtered is None
+
+
+def test_filter_deferred_tool_results_excludes_already_resolved_calls() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='query',
+                    tool_call_id='call-old',
+                    args={'sql_query': 'select 1'},
+                ),
+                ToolCallPart(
+                    tool_name='query',
+                    tool_call_id='call-new',
+                    args={'sql_query': 'select 2'},
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='query',
+                    tool_call_id='call-old',
+                    content='already completed',
+                )
+            ]
+        ),
+    ]
+
+    deferred_tool_results = DeferredToolResults(
+        approvals={
+            'call-old': True,
+            'call-new': True,
+        }
+    )
+
+    filtered = run_agent_task_module._filter_deferred_tool_results(
+        messages,
+        deferred_tool_results,
+    )
+
+    assert filtered is not None
+    assert filtered.approvals == {'call-new': True}
 
 
 @pytest.mark.anyio
@@ -93,19 +189,37 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
             return {'raw_body': raw_body}
 
         def __init__(
-            self, *, agent: object, run_input: dict[str, bytes], accept: str
+            self,
+            *,
+            agent: object,
+            run_input: dict[str, bytes],
+            accept: str,
+            sdk_version: int,
         ) -> None:
             assert accept == 'text/event-stream'
             assert run_input['raw_body'] == b'{"messages":[]}'
+            assert sdk_version == 6
             self.agent = agent
+            self.messages = []
+            self.deferred_tool_results = None
 
         @staticmethod
         def build_event_stream() -> FakeEventStream:
             return FakeEventStream()
 
-        async def run_stream(self, *, model, instructions, on_complete):
+        async def run_stream(
+            self,
+            *,
+            output_type=None,
+            deferred_tool_results=None,
+            model,
+            instructions,
+            on_complete,
+        ):
             captured_run_stream_args['model'] = model
             captured_run_stream_args['instructions'] = instructions
+            captured_run_stream_args['output_type'] = output_type
+            captured_run_stream_args['deferred_tool_results'] = deferred_tool_results
             await on_complete(FakeResult())
             yield 'chunk-1'
             yield 'chunk-2'
@@ -133,6 +247,8 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
     assert captured_run_stream_args == {
         'model': 'resolved:openai-responses:gpt-5',
         'instructions': 'be concise',
+        'output_type': [str, DeferredToolRequests],
+        'deferred_tool_results': None,
     }
     assert [call[2] for call in publish_calls] == ['encoded:chunk-1', 'encoded:chunk-2']
     assert len(terminal_calls) == 1
@@ -198,20 +314,38 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
             return {'raw_body': raw_body}
 
         def __init__(
-            self, *, agent: object, run_input: dict[str, bytes], accept: str
+            self,
+            *,
+            agent: object,
+            run_input: dict[str, bytes],
+            accept: str,
+            sdk_version: int,
         ) -> None:
             del agent
             del run_input
             del accept
+            del sdk_version
+            self.messages = []
+            self.deferred_tool_results = None
 
         @staticmethod
         def build_event_stream() -> FakeEventStream:
             return FakeEventStream()
 
-        async def run_stream(self, *, model, instructions, on_complete):
+        async def run_stream(
+            self,
+            *,
+            output_type=None,
+            deferred_tool_results=None,
+            model,
+            instructions,
+            on_complete,
+        ):
             del model
             del instructions
             del on_complete
+            del output_type
+            del deferred_tool_results
             raise RuntimeError('boom')
             yield 'unreachable'
 

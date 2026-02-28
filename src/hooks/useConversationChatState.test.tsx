@@ -51,6 +51,7 @@ describe('useConversationChatState', () => {
       clearError: vi.fn(),
       addToolOutput: vi.fn(),
       addToolResult: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
     })
 
     const hydrateFromMessages = vi.fn()
@@ -72,6 +73,9 @@ describe('useConversationChatState', () => {
     expect(setMessages).toHaveBeenCalledTimes(1)
     expect(hydrateFromMessages).toHaveBeenCalledTimes(1)
     expect(resumeStream).toHaveBeenCalledTimes(1)
+    const firstUseChatCall = useChatMock.mock.calls[0] as [unknown] | undefined
+    const firstUseChatArg = firstUseChatCall?.[0] as { sendAutomaticallyWhen?: unknown } | undefined
+    expect(typeof firstUseChatArg?.sendAutomaticallyWhen).toBe('function')
 
     rerender({ conversationId: 'conversation-1' })
 
@@ -101,6 +105,7 @@ describe('useConversationChatState', () => {
       clearError: vi.fn(),
       addToolOutput: vi.fn(),
       addToolResult: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
     })
 
     const { rerender } = renderHook<ReturnType<typeof useConversationChatState>, { conversationId: string | null }>(

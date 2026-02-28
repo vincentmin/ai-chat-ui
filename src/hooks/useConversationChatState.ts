@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { DefaultChatTransport, type UIMessage } from 'ai'
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses, type UIMessage } from 'ai'
 import { useChat } from '@ai-sdk/react'
 import { useEffect, useMemo, useRef } from 'react'
 
@@ -57,6 +57,7 @@ export function useConversationChatState({
     resume: false,
     onData,
     onFinish,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   })
 
   const { setMessages, status, resumeStream } = chat

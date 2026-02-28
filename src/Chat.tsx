@@ -68,7 +68,7 @@ const Chat = <TDataPanelData,>({
     resetDataPanel,
   } = dataPanelPlugin.useDataPanelController()
 
-  const { messages, sendMessage, status, regenerate, error } = useConversationChatState({
+  const { messages, sendMessage, status, regenerate, error, addToolApprovalResponse } = useConversationChatState({
     apiBasePath,
     conversationId,
     onData: onDataPart,
@@ -128,6 +128,12 @@ const Chat = <TDataPanelData,>({
     })
   }
 
+  function handleToolApprovalResponse(response: { id: string; approved: boolean }) {
+    Promise.resolve(addToolApprovalResponse(response)).catch((error: unknown) => {
+      console.error('Error sending tool approval response:', error)
+    })
+  }
+
   const chatPane = (
     <div className="flex h-full min-h-0 flex-col">
       <Conversation className="h-full">
@@ -154,6 +160,7 @@ const Chat = <TDataPanelData,>({
                   status={status}
                   index={i}
                   regen={regen}
+                  addToolApprovalResponse={handleToolApprovalResponse}
                   lastMessage={message.id === messages.at(-1)?.id}
                 />
               ))}

@@ -3,7 +3,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.response_types import DoneChunk, ErrorChunk
 from redis import asyncio as redis
@@ -32,6 +42,72 @@ def _get_worker_db_runtime() -> DatabaseRuntime:
         _worker_db_runtime = DatabaseRuntime(get_settings().resolved_database_url)
         _worker_db_runtime.startup()
     return _worker_db_runtime
+
+
+def _filter_deferred_tool_results(
+    messages: list[ModelMessage],
+    deferred_tool_results: DeferredToolResults | None,
+) -> DeferredToolResults | None:
+    """Keep deferred tool results only for unresolved calls in the latest step."""
+    if deferred_tool_results is None:
+        return None
+
+    last_model_request: ModelRequest | None = None
+    last_model_response: ModelResponse | None = None
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            last_model_request = message
+        elif isinstance(message, ModelResponse):
+            last_model_response = message
+            break
+
+    if last_model_response is None:
+        return None
+
+    expected_tool_call_ids = {
+        part.tool_call_id
+        for part in last_model_response.parts
+        if isinstance(part, ToolCallPart | BuiltinToolCallPart)
+    }
+
+    if not expected_tool_call_ids:
+        return None
+
+    already_resolved_ids: set[str] = set()
+    if last_model_request is not None:
+        already_resolved_ids = {
+            part.tool_call_id
+            for part in last_model_request.parts
+            if isinstance(part, ToolReturnPart | RetryPromptPart)
+        }
+
+    allowed_tool_call_ids = expected_tool_call_ids - already_resolved_ids
+
+    if not allowed_tool_call_ids:
+        return None
+
+    filtered = DeferredToolResults(
+        approvals={
+            tool_call_id: value
+            for tool_call_id, value in deferred_tool_results.approvals.items()
+            if tool_call_id in allowed_tool_call_ids
+        },
+        calls={
+            tool_call_id: value
+            for tool_call_id, value in deferred_tool_results.calls.items()
+            if tool_call_id in allowed_tool_call_ids
+        },
+        metadata={
+            tool_call_id: value
+            for tool_call_id, value in deferred_tool_results.metadata.items()
+            if tool_call_id in allowed_tool_call_ids
+        },
+    )
+
+    if not filtered.approvals and not filtered.calls:
+        return None
+
+    return filtered
 
 
 async def _update_run_status(
@@ -73,6 +149,10 @@ async def run_agent_task(
             accept='text/event-stream',
             sdk_version=6,
         )
+        deferred_tool_results = _filter_deferred_tool_results(
+            adapter.messages,
+            adapter.deferred_tool_results,
+        )
 
         model_ref = resolve_model_ref(agent_key, selected_model)
 
@@ -88,6 +168,8 @@ async def run_agent_task(
 
         event_stream = adapter.build_event_stream()
         async for chunk in adapter.run_stream(
+            output_type=[str, DeferredToolRequests],
+            deferred_tool_results=deferred_tool_results,
             model=model_ref,
             instructions=system_prompt,
             on_complete=on_complete,

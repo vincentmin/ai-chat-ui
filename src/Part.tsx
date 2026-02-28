@@ -2,17 +2,20 @@ import { Message, MessageContent } from '@/components/ai-elements/message'
 
 import { Actions, Action } from '@/components/ai-elements/actions'
 import { Response } from '@/components/ai-elements/response'
+import { Button } from '@/components/ui/button'
 import { CopyIcon, RefreshCcwIcon } from 'lucide-react'
 import type { UIDataTypes, UIMessagePart, UITools, UIMessage } from 'ai'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 import { Tool, ToolHeader, ToolInput, ToolOutput, ToolContent } from '@/components/ai-elements/tool'
 import { CodeBlock } from '@/components/ai-elements/code-block'
+import { getToolApprovalLabel } from '@/lib/tool-approval-labels'
 
 interface PartProps {
   part: UIMessagePart<UIDataTypes, UITools>
   message: UIMessage
   status: string
   regen: (id: string) => void
+  addToolApprovalResponse: (response: { id: string; approved: boolean }) => void
   index: number
   lastMessage: boolean
 }
@@ -35,7 +38,7 @@ function copy(text: string) {
   })
 }
 
-export function Part({ part, message, status, regen, index, lastMessage }: PartProps) {
+export function Part({ part, message, status, regen, addToolApprovalResponse, index, lastMessage }: PartProps) {
   if (part.type === 'text') {
     return (
       <div className="py-4">
@@ -85,6 +88,31 @@ export function Part({ part, message, status, regen, index, lastMessage }: PartP
         <ToolHeader type={`tool-${part.toolName}`} state={part.state} />
         <ToolContent>
           <ToolInput input={parsedInput} />
+          {part.state === 'approval-requested' && (
+            <div className="space-y-2 p-4">
+              <p className="text-sm">{getToolApprovalLabel(`tool-${part.toolName}`, parsedInput)}</p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    addToolApprovalResponse({ id: part.approval.id, approved: true })
+                  }}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    addToolApprovalResponse({ id: part.approval.id, approved: false })
+                  }}
+                >
+                  Deny
+                </Button>
+              </div>
+            </div>
+          )}
+          {part.state === 'output-denied' && <p className="p-4 text-sm">Tool execution was denied.</p>}
           {(part.state === 'output-available' || part.state === 'output-error') && (
             <ToolOutput
               errorText={part.errorText}
@@ -101,6 +129,31 @@ export function Part({ part, message, status, regen, index, lastMessage }: PartP
         <ToolHeader type={part.type} state={part.state} />
         <ToolContent>
           <ToolInput input={part.input} />
+          {part.state === 'approval-requested' && (
+            <div className="space-y-2 p-4">
+              <p className="text-sm">{getToolApprovalLabel(part.type, part.input)}</p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    addToolApprovalResponse({ id: part.approval.id, approved: true })
+                  }}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    addToolApprovalResponse({ id: part.approval.id, approved: false })
+                  }}
+                >
+                  Deny
+                </Button>
+              </div>
+            </div>
+          )}
+          {part.state === 'output-denied' && <p className="p-4 text-sm">Tool execution was denied.</p>}
           {(part.state === 'output-available' || part.state === 'output-error') && (
             <ToolOutput
               errorText={part.errorText}

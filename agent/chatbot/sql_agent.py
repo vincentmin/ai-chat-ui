@@ -23,6 +23,7 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
 agent = pydantic_ai.Agent(
     model='openai-responses:gpt-4.1-nano',
+    output_type=[str, pydantic_ai.DeferredToolRequests],
     instructions=(
         'You are an expert SQL assistant using the Chinook sample database. '
         'Use the query tool for analysis and the display tool when the user asks '
@@ -31,7 +32,7 @@ agent = pydantic_ai.Agent(
 )
 
 
-@agent.tool_plain
+@agent.tool_plain(requires_approval=True)
 def query(sql_query: str) -> str:
     """Run a SQL query and return a truncated preview of the result."""
     try:
@@ -45,7 +46,7 @@ def query(sql_query: str) -> str:
         raise pydantic_ai.ModelRetry(f'Failed to run SQL query: {e}') from e
 
 
-@agent.tool_plain
+@agent.tool_plain(requires_approval=True)
 def display(sql_query: str) -> pydantic_ai.ToolReturn:
     """Run a SQL query and send full results to the frontend as data metadata."""
     try:
