@@ -17,10 +17,6 @@ export interface RemoteConfig {
   defaultSystemPrompt: string | null
 }
 
-export interface CreateConversationResponse {
-  id: string
-}
-
 export interface ChatHistoryResponse {
   messages: UIMessage[]
 }

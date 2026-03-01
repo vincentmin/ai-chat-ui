@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createConversation, getConfig, getConversationMessages } from './api'
+import { getConfig, getConversationMessages } from './api'
 
 describe('api helpers', () => {
   beforeEach(() => {
@@ -30,13 +30,6 @@ describe('api helpers', () => {
 
     expect(fetch).toHaveBeenCalledWith('/api/v1/sql/configure')
     expect(result).toEqual(payload)
-  })
-
-  it('createConversation throws when response is not ok', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 500 }))
-
-    await expect(createConversation('/api/v1/sql')).rejects.toThrow('Failed to create conversation')
-    expect(fetch).toHaveBeenCalledWith('/api/v1/sql/chat', { method: 'POST' })
   })
 
   it('getConversationMessages throws when response is not ok', async () => {

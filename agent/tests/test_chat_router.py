@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
-from dirty_equals import IsStr
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
@@ -75,13 +74,6 @@ def test_configure_endpoint_returns_models_and_prompt_capability(client) -> None
     assert len(payload['models']) >= 1
     assert payload['canOverrideSystemPrompt'] is True
     assert payload['defaultSystemPrompt'] == 'Test agent'
-
-
-def test_create_conversation_returns_string_id(client) -> None:
-    response = client.post('/api/chat')
-
-    assert response.status_code == 200
-    assert response.json() == {'id': IsStr()}
 
 
 def test_get_chat_returns_empty_messages_for_missing_snapshot(client) -> None:

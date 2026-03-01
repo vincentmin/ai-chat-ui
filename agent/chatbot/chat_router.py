@@ -68,14 +68,6 @@ class ChatRequestExtra(
     agent_key: str | None = None
 
 
-class CreateConversationResponse(
-    BaseModel,
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    id: str
-
-
 class ConversationSummary(
     BaseModel,
     alias_generator=to_camel,
@@ -263,18 +255,9 @@ def create_chat_router(
 
     router = APIRouter()
 
-    @router.options('/chat')
-    async def options_chat() -> Response:
-        return Response()
-
     @router.options('/chat/{conversation_id}')
     async def options_chat_with_id() -> Response:
         return Response()
-
-    @router.post('/chat')
-    async def create_conversation() -> CreateConversationResponse:
-        payload = CreateConversationResponse(id=str(uuid4()))
-        return payload
 
     @router.get('/configure')
     async def configure_frontend() -> ConfigureFrontend:

@@ -8,7 +8,7 @@ Move the chatbot application to a backend-persistent, task-queue-based architect
 
 1. Canonical chat endpoint shape is `/chat/{id}`.
 2. Canonical persisted conversation state is `AgentRunResult` snapshots, not stored `UIMessage[]` arrays.
-3. The backend generates conversation IDs for new chats and the frontend navigates to `/chat/{id}` before sending messages.
+3. The frontend generates conversation IDs for new chats and navigates to `/chat/{id}` before sending messages.
 4. Taskiq broker backend is Redis in both development and production.
 5. Development Redis defaults to in-process `redislite` (or `REDIS_URL` override), while production requires managed `REDIS_URL`.
 
@@ -70,8 +70,8 @@ Keep `useChat`, Vercel AI Elements, and shadcn components for rendering and inte
 
 ## Near-Term Execution Plan (Step 3 to Step 5 bridge)
 
-1. Add `POST /chat` create endpoint returning backend-generated conversation ID.
-2. Move run endpoint to `POST /chat/{id}` and remove conversation ID inference from run results.
+1. Use frontend-generated IDs for new chats and post first turns directly to `POST /chat/{id}`.
+2. Keep run endpoint at `POST /chat/{id}` and remove conversation ID inference from run results.
 3. Persist full `AgentRunResult` snapshot in `on_complete` for each run.
 4. Add `GET /chat/{id}` to derive `UIMessage[]` from persisted snapshot and return it to the frontend.
 5. Update frontend routing/transport to always use `/chat/{id}` and load history from backend.
