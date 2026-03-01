@@ -1,8 +1,8 @@
 import { CirclePlus, MessageCircle, Trash } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
 import { Button } from '@/components/ui/button'
@@ -27,31 +27,11 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { getConversations, removeConversation } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
 import logoSvg from '../assets/logo.svg'
-
-interface ConversationsResponse {
-  conversations: ConversationEntry[]
-}
-
-async function fetchConversations(apiBasePath: string) {
-  const res = await fetch(`${apiBasePath}/chats`)
-  if (!res.ok) {
-    throw new Error('Failed to fetch conversations')
-  }
-  return (await res.json()) as ConversationsResponse
-}
-
-async function deleteConversation(apiBasePath: string, conversationId: string) {
-  const res = await fetch(`${apiBasePath}/chat/${conversationId}`, {
-    method: 'DELETE',
-  })
-  if (!res.ok) {
-    throw new Error('Failed to delete conversation')
-  }
-}
 
 interface AppSidebarProps {
   apiBasePath: string
@@ -69,25 +49,33 @@ export function AppSidebar({
   onConversationIdChange,
 }: AppSidebarProps) {
   const isSql = conversationBasePath === '/sql'
-  const [refreshTick, setRefreshTick] = useState(0)
+  const queryClient = useQueryClient()
+  const conversationsQueryKey = useMemo(() => ['conversations', apiBasePath] as const, [apiBasePath])
   const conversationsQuery = useQuery({
-    queryFn: () => fetchConversations(apiBasePath),
-    queryKey: ['conversations', apiBasePath, refreshTick],
+    queryFn: () => getConversations(apiBasePath),
+    queryKey: conversationsQueryKey,
   })
   const conversations = conversationsQuery.data?.conversations ?? []
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [conversationToDelete, setConversationToDelete] = useState<ConversationEntry | null>(null)
 
+  const invalidateConversations = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: conversationsQueryKey }),
+    [conversationsQueryKey, queryClient],
+  )
+
   useEffect(() => {
     const refresh = () => {
-      setRefreshTick((value) => value + 1)
+      invalidateConversations().catch((error: unknown) => {
+        console.error('Failed to refresh conversations', error)
+      })
     }
 
     window.addEventListener('conversations-changed', refresh)
     return () => {
       window.removeEventListener('conversations-changed', refresh)
     }
-  }, [])
+  }, [conversationsQueryKey, invalidateConversations])
 
   const handleDeleteClick = (e: React.MouseEvent, conversation: ConversationEntry) => {
     e.preventDefault()
@@ -97,24 +85,27 @@ export function AppSidebar({
   }
 
   const handleConfirmDelete = () => {
-    if (conversationToDelete) {
-      deleteConversation(apiBasePath, conversationToDelete.id)
-        .then(() => {
-          setDeleteDialogOpen(false)
-          setConversationToDelete(null)
-          setRefreshTick((value) => value + 1)
-
-          if (conversationId === conversationToDelete.id) {
-            onConversationIdChange(null)
-          }
-
-          toast.success('Chat deleted successfully')
-        })
-        .catch((error: unknown) => {
-          console.error('Failed to delete conversation', error)
-          toast.error('Failed to delete chat')
-        })
+    if (!conversationToDelete) {
+      return
     }
+
+    const deleteCurrentConversation = async () => {
+      await removeConversation(apiBasePath, conversationToDelete.id)
+      setDeleteDialogOpen(false)
+      setConversationToDelete(null)
+      await invalidateConversations()
+
+      if (conversationId === conversationToDelete.id) {
+        onConversationIdChange(null)
+      }
+
+      toast.success('Chat deleted successfully')
+    }
+
+    deleteCurrentConversation().catch((error: unknown) => {
+      console.error('Failed to delete conversation', error)
+      toast.error('Failed to delete chat')
+    })
   }
 
   return (

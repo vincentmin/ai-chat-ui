@@ -94,12 +94,6 @@ const Chat = <TDataPanelData,>({
     }
   }, [isPromptDialogOpen, systemPrompt])
 
-  useEffect(() => {
-    if (!conversationId) {
-      resetDataPanel()
-    }
-  }, [conversationId, resetDataPanel])
-
   // Focus the textarea when the active conversation changes
   useEffect(() => {
     textareaRef.current?.focus()

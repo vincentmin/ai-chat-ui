@@ -20,3 +20,7 @@ export interface RemoteConfig {
 export interface ChatHistoryResponse {
   messages: UIMessage[]
 }
+
+export interface ConversationsResponse {
+  conversations: ConversationEntry[]
+}
