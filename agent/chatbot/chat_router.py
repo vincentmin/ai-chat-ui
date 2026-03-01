@@ -9,8 +9,6 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from pydantic.alias_generators import to_camel
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -19,8 +17,17 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 
+from .chat_schemas import (
+    ChatMessagesResponse,
+    ChatRequestExtra,
+    ConfigureFrontend,
+    ConversationsResponse,
+    ConversationSummary,
+    DeleteChatResponse,
+    HealthResponse,
+    ModelInfo,
+)
 from .db.message_codec import messages_from_json
 from .db.runtime import DatabaseRuntime
 from .db.service import (
@@ -40,66 +47,73 @@ from .tasks.run_agent_task import run_agent_task
 logger = logging.getLogger(__name__)
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
+_CHAT_STREAM_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 
 
-class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
-    id: str
-    name: str
+def _require_redis_url(settings: AppSettings) -> str:
+    redis_url = settings.redis_url
+    if not isinstance(redis_url, str) or not redis_url:
+        raise HTTPException(status_code=503, detail='Redis runtime unavailable')
+    return redis_url
 
 
-class ConfigureFrontend(BaseModel, alias_generator=to_camel, populate_by_name=True):
-    models: list[ModelInfo]
-    can_override_system_prompt: bool
-    default_system_prompt: str | None
+def _validate_chat_request(
+    *,
+    raw_body: bytes,
+    model_ids: set[str],
+    can_override_system_prompt: bool,
+) -> ChatRequestExtra:
+    run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
+    extra_data = ChatRequestExtra.model_validate(run_input.__pydantic_extra__)
+
+    if extra_data.model and extra_data.model not in model_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Model "{extra_data.model}" is not in the allowed models list',
+        )
+
+    if extra_data.system_prompt and not can_override_system_prompt:
+        raise HTTPException(
+            status_code=400,
+            detail='System prompt override is not available for this agent',
+        )
+
+    return extra_data
 
 
-class HealthResponse(BaseModel, alias_generator=to_camel, populate_by_name=True):
-    ok: bool
+def _streaming_response(
+    redis_url: str,
+    stream_key: str,
+    *,
+    start_id: str = '0-0',
+) -> StreamingResponse:
+    return StreamingResponse(
+        _relay_stream(redis_url, stream_key, start_id=start_id),
+        media_type='text/event-stream',
+        headers=_CHAT_STREAM_HEADERS,
+    )
 
 
-class ChatRequestExtra(
-    BaseModel,
-    extra='ignore',
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    model: str | None = None
-    system_prompt: str | None = None
-    agent_key: str | None = None
+def _build_conversation_summaries(
+    latest_by_conversation: Mapping[str, Any],
+) -> list[ConversationSummary]:
+    summaries: list[ConversationSummary] = []
+    for conversation_id, snapshot in latest_by_conversation.items():
+        messages = messages_from_json(snapshot.model_messages_json)
+        first_message = _first_user_message_text(messages)
+        summaries.append(
+            ConversationSummary(
+                id=conversation_id,
+                first_message=first_message,
+                timestamp=int(snapshot.created_at.timestamp() * 1000),
+            )
+        )
 
-
-class ConversationSummary(
-    BaseModel,
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    id: str
-    first_message: str | None = None
-    timestamp: int
-
-
-class ConversationsResponse(
-    BaseModel,
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    conversations: list[ConversationSummary]
-
-
-class DeleteChatResponse(
-    BaseModel,
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    ok: bool
-
-
-class ChatMessagesResponse(
-    BaseModel,
-    alias_generator=to_camel,
-    populate_by_name=True,
-):
-    messages: list[UIMessage]
+    return sorted(
+        summaries,
+        key=lambda summary: summary.timestamp,
+        reverse=True,
+    )
 
 
 def _first_user_message_text(model_messages: list[ModelMessage]) -> str | None:
@@ -269,7 +283,7 @@ def create_chat_router(
         return config
 
     @router.get('/health')
-    async def health(request: Request) -> HealthResponse:
+    async def health() -> HealthResponse:
         return HealthResponse(ok=True)
 
     @router.post('/chat/{conversation_id}')
@@ -280,24 +294,12 @@ def create_chat_router(
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> StreamingResponse:
         raw_body = _normalize_tool_part_states(await request.body())
-        run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
-        extra_data = ChatRequestExtra.model_validate(run_input.__pydantic_extra__)
-
-        if extra_data.model and extra_data.model not in model_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=f'Model "{extra_data.model}" is not in the allowed models list',
-            )
-
-        if extra_data.system_prompt and not can_override_system_prompt:
-            raise HTTPException(
-                status_code=400,
-                detail='System prompt override is not available for this agent',
-            )
-
-        redis_url = settings.redis_url
-        if not isinstance(redis_url, str) or not redis_url:
-            raise HTTPException(status_code=503, detail='Redis runtime unavailable')
+        extra_data = _validate_chat_request(
+            raw_body=raw_body,
+            model_ids=model_ids,
+            can_override_system_prompt=can_override_system_prompt,
+        )
+        redis_url = _require_redis_url(settings)
 
         # POST always means a new user message — supersede any stale active runs
         # so they don't block the new enqueue.
@@ -328,11 +330,7 @@ def create_chat_router(
             run_id=run_id,
         )
 
-        return StreamingResponse(
-            _relay_stream(redis_url, stream_key),
-            media_type='text/event-stream',
-            headers={'x-vercel-ai-ui-message-stream': 'v1'},
-        )
+        return _streaming_response(redis_url, stream_key)
 
     @router.get('/chat/{conversation_id}/stream')
     async def stream_chat(
@@ -340,9 +338,7 @@ def create_chat_router(
         settings: AppSettings = Depends(get_settings),
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> Response:
-        redis_url = settings.redis_url
-        if not isinstance(redis_url, str) or not redis_url:
-            raise HTTPException(status_code=503, detail='Redis runtime unavailable')
+        redis_url = _require_redis_url(settings)
 
         with db_runtime.session() as session:
             active_run = get_active_run(session, conversation_id, agent_key)
@@ -359,16 +355,11 @@ def create_chat_router(
             conversation_id=conversation_id,
             run_id=active_run.run_id,
         )
-        return StreamingResponse(
-            _relay_stream(redis_url, stream_key, start_id='0-0'),
-            media_type='text/event-stream',
-            headers={'x-vercel-ai-ui-message-stream': 'v1'},
-        )
+        return _streaming_response(redis_url, stream_key, start_id='0-0')
 
     @router.get('/chat/{conversation_id}')
     async def get_chat(
         conversation_id: str,
-        request: Request,
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> ChatMessagesResponse:
         with db_runtime.session() as session:
@@ -384,7 +375,6 @@ def create_chat_router(
 
     @router.get('/chats')
     async def list_chats(
-        request: Request,
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> ConversationsResponse:
         with db_runtime.session() as session:
@@ -392,29 +382,13 @@ def create_chat_router(
                 session, agent_key
             )
 
-        summaries: list[ConversationSummary] = []
-        for conversation_id, snapshot in latest_by_conversation.items():
-            messages = messages_from_json(snapshot.model_messages_json)
-            first_message = _first_user_message_text(messages)
-            summaries.append(
-                ConversationSummary(
-                    id=conversation_id,
-                    first_message=first_message,
-                    timestamp=int(snapshot.created_at.timestamp() * 1000),
-                )
-            )
-
-        sorted_summaries = sorted(
-            summaries,
-            key=lambda summary: summary.timestamp,
-            reverse=True,
+        return ConversationsResponse(
+            conversations=_build_conversation_summaries(latest_by_conversation)
         )
-        return ConversationsResponse(conversations=sorted_summaries)
 
     @router.delete('/chat/{conversation_id}')
     async def delete_chat(
         conversation_id: str,
-        request: Request,
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> DeleteChatResponse:
         with db_runtime.session() as session:
