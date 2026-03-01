@@ -1,40 +1,16 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import type { ReactNode, SyntheticEvent } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useChatSubmit } from './useChatSubmit'
 
-const { createConversationMock } = vi.hoisted(() => ({
-  createConversationMock: vi.fn(),
-}))
-
-vi.mock('@/lib/api', () => ({
-  createConversation: createConversationMock,
-}))
-
-interface HookProps {
-  conversationId: string | null
-}
-
-type UseChatSubmitResult = ReturnType<typeof useChatSubmit>
-
 function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      mutations: { retry: false },
-      queries: { retry: false },
-    },
-  })
-
-  return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  )
+  return ({ children }: { children: ReactNode }) => children
 }
 
 describe('useChatSubmit', () => {
   beforeEach(() => {
-    createConversationMock.mockReset()
+    window.sessionStorage.clear()
   })
 
   afterEach(() => {
@@ -55,7 +31,6 @@ describe('useChatSubmit', () => {
           systemPrompt: 'custom prompt',
           canOverrideSystemPrompt: false,
           sendMessage,
-          configQueryData: { canOverrideSystemPrompt: false },
         }),
       {
         wrapper: createWrapper(),
@@ -77,7 +52,6 @@ describe('useChatSubmit', () => {
     })
 
     expect(preventDefault).toHaveBeenCalledTimes(1)
-    expect(createConversationMock).not.toHaveBeenCalled()
     expect(setConversationId).not.toHaveBeenCalled()
     expect(result.current.input).toBe('')
     expect(sendMessage).toHaveBeenCalledWith(
@@ -91,15 +65,17 @@ describe('useChatSubmit', () => {
     )
   })
 
-  it('creates conversation first and sends pending message after id is set', async () => {
-    createConversationMock.mockResolvedValue({ id: 'conversation-new' })
+  it('generates conversation id and sends pending message after id is set', async () => {
+    const randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValue('00000000-0000-4000-8000-000000000001')
 
     let conversationId: string | null = null
     const sendMessage = vi.fn().mockResolvedValue(undefined)
     const setConversationId = vi.fn()
     const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent')
 
-    const { result, rerender } = renderHook<UseChatSubmitResult, HookProps>(
+    const { result, rerender } = renderHook(
       () =>
         useChatSubmit({
           apiBasePath: '/api/v1/sql',
@@ -109,7 +85,6 @@ describe('useChatSubmit', () => {
           systemPrompt: 'custom prompt',
           canOverrideSystemPrompt: true,
           sendMessage,
-          configQueryData: { canOverrideSystemPrompt: true },
         }),
       {
         wrapper: createWrapper(),
@@ -125,16 +100,12 @@ describe('useChatSubmit', () => {
     })
 
     await waitFor(() => {
-      expect(createConversationMock).toHaveBeenCalledWith('/api/v1/sql')
-    })
-
-    await waitFor(() => {
-      expect(setConversationId).toHaveBeenCalledWith('conversation-new')
+      expect(setConversationId).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001')
     })
 
     expect(sendMessage).not.toHaveBeenCalled()
 
-    conversationId = 'conversation-new'
+    conversationId = '00000000-0000-4000-8000-000000000001'
     rerender()
 
     await waitFor(() => {
@@ -150,5 +121,76 @@ describe('useChatSubmit', () => {
     })
 
     expect(dispatchEventSpy).toHaveBeenCalledTimes(1)
+    randomUUIDSpy.mockRestore()
+  })
+
+  it('sends pending first message after route remount', async () => {
+    const randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValue('00000000-0000-4000-8000-000000000002')
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined)
+    const setConversationId = vi.fn()
+
+    const firstRender = renderHook(
+      () =>
+        useChatSubmit({
+          apiBasePath: '/api/v1/sql',
+          conversationId: null,
+          setConversationId,
+          model: 'gpt-5',
+          systemPrompt: 'custom prompt',
+          canOverrideSystemPrompt: true,
+          sendMessage,
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    )
+
+    act(() => {
+      firstRender.result.current.setInput('Message that survives remount')
+    })
+
+    act(() => {
+      firstRender.result.current.handleSubmit({ preventDefault: vi.fn() } as unknown as SyntheticEvent)
+    })
+
+    await waitFor(() => {
+      expect(setConversationId).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002')
+    })
+
+    firstRender.unmount()
+
+    renderHook(
+      () =>
+        useChatSubmit({
+          apiBasePath: '/api/v1/sql',
+          conversationId: '00000000-0000-4000-8000-000000000002',
+          setConversationId,
+          model: 'gpt-5',
+          systemPrompt: 'custom prompt',
+          canOverrideSystemPrompt: true,
+          sendMessage,
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    )
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith(
+        { text: 'Message that survives remount' },
+        {
+          body: {
+            model: 'gpt-5',
+            systemPrompt: 'custom prompt',
+          },
+        },
+      )
+    })
+
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    randomUUIDSpy.mockRestore()
   })
 })

@@ -1,6 +1,39 @@
 import { useState, useEffect, useCallback, type SyntheticEvent } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { createConversation } from '@/lib/api'
+
+const PENDING_FIRST_MESSAGE_KEY = 'pending-first-message'
+
+function getPendingMessageStorageKey(apiBasePath: string, conversationId: string): string {
+  return `${PENDING_FIRST_MESSAGE_KEY}:${apiBasePath}:${conversationId}`
+}
+
+function persistPendingMessage(apiBasePath: string, conversationId: string, message: string) {
+  try {
+    window.sessionStorage.setItem(getPendingMessageStorageKey(apiBasePath, conversationId), message)
+  } catch {
+    // sessionStorage may be unavailable in some environments; continue with in-memory fallback.
+  }
+}
+
+function consumePendingMessage(apiBasePath: string, conversationId: string): string | null {
+  try {
+    const key = getPendingMessageStorageKey(apiBasePath, conversationId)
+    const value = window.sessionStorage.getItem(key)
+    if (value) {
+      window.sessionStorage.removeItem(key)
+    }
+    return value
+  } catch {
+    return null
+  }
+}
+
+function clearPendingMessage(apiBasePath: string, conversationId: string) {
+  try {
+    window.sessionStorage.removeItem(getPendingMessageStorageKey(apiBasePath, conversationId))
+  } catch {
+    // Ignore storage failures; sending can still proceed with in-memory state.
+  }
+}
 
 interface UseChatSubmitOptions {
   apiBasePath: string
@@ -10,14 +43,20 @@ interface UseChatSubmitOptions {
   systemPrompt: string
   canOverrideSystemPrompt: boolean | undefined
   sendMessage: (msg: { text: string }, opts: { body: Record<string, unknown> }) => Promise<void>
-  configQueryData: { canOverrideSystemPrompt: boolean } | undefined
 }
 
 interface UseChatSubmitResult {
   input: string
   setInput: (value: string) => void
   handleSubmit: (e: SyntheticEvent) => void
-  isCreatingConversation: boolean
+}
+
+function generateConversationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 export function useChatSubmit({
@@ -50,14 +89,20 @@ export function useChatSubmit({
   )
 
   useEffect(() => {
-    if (!conversationId || !pendingMessage) return
-    sendTextMessage(pendingMessage)
-    setPendingMessage(null)
-  }, [conversationId, pendingMessage, sendTextMessage])
+    if (!conversationId) return
 
-  const createConversationMutation = useMutation({
-    mutationFn: () => createConversation(apiBasePath),
-  })
+    const messageToSend = pendingMessage ?? consumePendingMessage(apiBasePath, conversationId)
+    if (!messageToSend) {
+      return
+    }
+
+    if (pendingMessage) {
+      clearPendingMessage(apiBasePath, conversationId)
+      setPendingMessage(null)
+    }
+
+    sendTextMessage(messageToSend)
+  }, [apiBasePath, conversationId, pendingMessage, sendTextMessage])
 
   const handleSubmit = (e: SyntheticEvent) => {
     e.preventDefault()
@@ -66,16 +111,11 @@ export function useChatSubmit({
       setInput('')
 
       if (!conversationId) {
-        createConversationMutation.mutate(undefined, {
-          onSuccess: (response) => {
-            setConversationId(response.id)
-            setPendingMessage(submittedText)
-            window.dispatchEvent(new Event('conversations-changed'))
-          },
-          onError: (error: unknown) => {
-            console.error('Error creating conversation:', error)
-          },
-        })
+        const newConversationId = generateConversationId()
+        persistPendingMessage(apiBasePath, newConversationId, submittedText)
+        setConversationId(newConversationId)
+        setPendingMessage(submittedText)
+        window.dispatchEvent(new Event('conversations-changed'))
         return
       }
 
@@ -87,6 +127,5 @@ export function useChatSubmit({
     input,
     setInput,
     handleSubmit,
-    isCreatingConversation: createConversationMutation.isPending,
   }
 }

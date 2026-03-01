@@ -126,4 +126,54 @@ describe('useConversationChatState', () => {
 
     expect(setMessages).toHaveBeenCalledWith([])
   })
+
+  it('does not hydrate late when chat becomes ready after submission', () => {
+    const setMessages = vi.fn()
+    const resumeStream = vi.fn().mockResolvedValue(undefined)
+    const chatState = {
+      setMessages,
+      resumeStream,
+      status: 'submitted',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
+      sendMessage: vi.fn(),
+      regenerate: vi.fn(),
+      error: undefined,
+      stop: vi.fn(),
+      clearError: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolResult: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+    }
+
+    useQueryMock.mockReturnValue({
+      data: { messages: [] },
+      isFetched: true,
+      isLoading: false,
+    })
+
+    useChatMock.mockImplementation(() => chatState)
+
+    const hydrateFromMessages = vi.fn()
+
+    const { rerender } = renderHook(() =>
+      useConversationChatState({
+        apiBasePath: '/api/v1/sql',
+        conversationId: 'conversation-1',
+        onData: vi.fn(),
+        onFinish: vi.fn(),
+        hydrateFromMessages,
+      }),
+    )
+
+    expect(setMessages).not.toHaveBeenCalled()
+    expect(hydrateFromMessages).not.toHaveBeenCalled()
+    expect(resumeStream).not.toHaveBeenCalled()
+
+    chatState.status = 'ready'
+    rerender()
+
+    expect(setMessages).not.toHaveBeenCalled()
+    expect(hydrateFromMessages).not.toHaveBeenCalled()
+    expect(resumeStream).toHaveBeenCalledTimes(1)
+  })
 })

@@ -119,7 +119,6 @@ const Chat = <TDataPanelData,>({
     systemPrompt,
     canOverrideSystemPrompt: configQuery.data?.canOverrideSystemPrompt,
     sendMessage,
-    configQueryData: configQuery.data,
   })
 
   function regen(messageId: string) {

@@ -82,6 +82,10 @@ export function useConversationChatState({
     }
 
     if (status !== 'ready') {
+      if (hydratedConversationIdRef.current !== conversationId) {
+        // Mark hydration as handled so a late transition to ready does not clobber active turn messages.
+        hydratedConversationIdRef.current = conversationId
+      }
       return
     }
 
