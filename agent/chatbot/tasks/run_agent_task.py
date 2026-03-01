@@ -8,8 +8,6 @@ from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
     ModelMessage,
-    ModelRequest,
-    ModelResponse,
     RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
@@ -48,59 +46,43 @@ def _filter_deferred_tool_results(
     messages: list[ModelMessage],
     deferred_tool_results: DeferredToolResults | None,
 ) -> DeferredToolResults | None:
-    """Keep deferred tool results only for unresolved calls in the latest step."""
-    if deferred_tool_results is None:
+    """Keep deferred tool results only for dangling tool"""
+    if deferred_tool_results is None or not messages:
         return None
 
-    last_model_request: ModelRequest | None = None
-    last_model_response: ModelResponse | None = None
-    for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            last_model_request = message
-        elif isinstance(message, ModelResponse):
-            last_model_response = message
-            break
-
-    if last_model_response is None:
-        return None
-
-    expected_tool_call_ids = {
+    # find any tool calls without corresponding tool message
+    tool_call_ids: set[str] = {
         part.tool_call_id
-        for part in last_model_response.parts
+        for message in messages
+        for part in message.parts
         if isinstance(part, ToolCallPart | BuiltinToolCallPart)
     }
+    tool_message_ids: set[str] = {
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart | RetryPromptPart | BuiltinToolCallPart)
+    }
+    dangling_tool_call_ids: set[str] = tool_call_ids - tool_message_ids
 
-    if not expected_tool_call_ids:
-        return None
-
-    already_resolved_ids: set[str] = set()
-    if last_model_request is not None:
-        already_resolved_ids = {
-            part.tool_call_id
-            for part in last_model_request.parts
-            if isinstance(part, ToolReturnPart | RetryPromptPart)
-        }
-
-    allowed_tool_call_ids = expected_tool_call_ids - already_resolved_ids
-
-    if not allowed_tool_call_ids:
+    if not dangling_tool_call_ids:
         return None
 
     filtered = DeferredToolResults(
         approvals={
             tool_call_id: value
             for tool_call_id, value in deferred_tool_results.approvals.items()
-            if tool_call_id in allowed_tool_call_ids
+            if tool_call_id in dangling_tool_call_ids
         },
         calls={
             tool_call_id: value
             for tool_call_id, value in deferred_tool_results.calls.items()
-            if tool_call_id in allowed_tool_call_ids
+            if tool_call_id in dangling_tool_call_ids
         },
         metadata={
             tool_call_id: value
             for tool_call_id, value in deferred_tool_results.metadata.items()
-            if tool_call_id in allowed_tool_call_ids
+            if tool_call_id in dangling_tool_call_ids
         },
     )
 
@@ -153,7 +135,6 @@ async def run_agent_task(
             adapter.messages,
             adapter.deferred_tool_results,
         )
-
         model_ref = resolve_model_ref(agent_key, selected_model)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:

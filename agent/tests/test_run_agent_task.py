@@ -37,7 +37,16 @@ def test_filter_deferred_tool_results_matches_last_model_response_calls() -> Non
                     tool_name='query',
                     tool_call_id='call-old',
                     args={'sql_query': 'select 1'},
-                )
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='query',
+                    tool_call_id='call-old',
+                    content='already completed',
+                ),
             ]
         ),
         ModelResponse(
