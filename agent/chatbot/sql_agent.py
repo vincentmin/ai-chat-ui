@@ -26,7 +26,7 @@ agent = pydantic_ai.Agent(
     model=OpenAIResponsesModel(
         'gpt-5-mini',
         settings=OpenAIResponsesModelSettings(
-            openai_store=False,  # This is necessary to see the reasoning traces
+            openai_store=True,  # This is necessary to see the reasoning traces
             openai_reasoning_summary='auto',
             openai_reasoning_effort='low',
         ),
