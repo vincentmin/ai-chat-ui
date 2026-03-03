@@ -7,6 +7,7 @@ from pathlib import Path
 
 import duckdb
 import pydantic_ai
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 CHINOOK_DB_PATH = Path(__file__).with_name('chinook.db')
@@ -22,7 +23,12 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
 
 agent = pydantic_ai.Agent(
-    model='openai-responses:gpt-4.1-nano',
+    model=OpenAIResponsesModel(
+        'gpt-5-mini',
+        settings=OpenAIResponsesModelSettings(
+            openai_reasoning_summary='auto',
+        ),
+    ),
     output_type=[str, pydantic_ai.DeferredToolRequests],
     instructions=(
         'You are an expert SQL assistant using the Chinook sample database. '
