@@ -49,6 +49,7 @@ interface UseChatSubmitResult {
   input: string
   setInput: (value: string) => void
   handleSubmit: (e: SyntheticEvent) => void
+  submitText: (text: string) => void
 }
 
 function generateConversationId(): string {
@@ -104,28 +105,41 @@ export function useChatSubmit({
     sendTextMessage(messageToSend)
   }, [apiBasePath, conversationId, pendingMessage, sendTextMessage])
 
-  const handleSubmit = (e: SyntheticEvent) => {
-    e.preventDefault()
-    if (input.trim()) {
-      const submittedText = input
-      setInput('')
+  const submitText = useCallback(
+    (text: string) => {
+      if (!text.trim()) {
+        return
+      }
 
       if (!conversationId) {
         const newConversationId = generateConversationId()
-        persistPendingMessage(apiBasePath, newConversationId, submittedText)
+        persistPendingMessage(apiBasePath, newConversationId, text)
         setConversationId(newConversationId)
-        setPendingMessage(submittedText)
+        setPendingMessage(text)
         window.dispatchEvent(new Event('conversations-changed'))
         return
       }
 
-      sendTextMessage(submittedText)
+      sendTextMessage(text)
+    },
+    [apiBasePath, conversationId, sendTextMessage, setConversationId],
+  )
+
+  const handleSubmit = (e: SyntheticEvent) => {
+    e.preventDefault()
+    if (!input.trim()) {
+      return
     }
+
+    const submittedText = input
+    setInput('')
+    submitText(submittedText)
   }
 
   return {
     input,
     setInput,
     handleSubmit,
+    submitText,
   }
 }

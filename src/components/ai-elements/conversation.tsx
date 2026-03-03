@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ArrowDownIcon } from 'lucide-react'
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { useCallback } from 'react'
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom'
 
@@ -21,6 +21,30 @@ export type ConversationContentProps = ComponentProps<typeof StickToBottom.Conte
 
 export const ConversationContent = ({ className, ...props }: ConversationContentProps) => (
   <StickToBottom.Content className={cn('p-4 stick-to-bottom', className)} {...props} />
+)
+
+export type ConversationEmptyStateProps = ComponentProps<'div'> & {
+  title?: string
+  description?: string
+  icon?: ReactNode
+}
+
+export const ConversationEmptyState = ({
+  className,
+  title = 'No messages yet',
+  description = 'Start a conversation to see messages here.',
+  icon,
+  children,
+  ...props
+}: ConversationEmptyStateProps) => (
+  <div className={cn('flex flex-col items-center justify-center gap-3 px-6 py-12 text-center', className)} {...props}>
+    {icon}
+    <div className="space-y-1">
+      <p className="font-medium text-sm">{title}</p>
+      <p className="text-muted-foreground text-sm">{description}</p>
+    </div>
+    {children}
+  </div>
 )
 
 export type ConversationScrollButtonProps = ComponentProps<typeof Button>

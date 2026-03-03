@@ -1,18 +1,30 @@
-import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation'
 import { Loader } from '@/components/ai-elements/loader'
 import {
   PromptInput,
   PromptInputButton,
-  PromptInputModelSelect,
-  PromptInputModelSelectContent,
-  PromptInputModelSelectItem,
-  PromptInputModelSelectTrigger,
-  PromptInputModelSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputToolbar,
   PromptInputTools,
 } from '@/components/ai-elements/prompt-input'
+import {
+  ModelSelector,
+  ModelSelectorContent,
+  ModelSelectorEmpty,
+  ModelSelectorGroup,
+  ModelSelectorInput,
+  ModelSelectorItem,
+  ModelSelectorList,
+  ModelSelectorName,
+  ModelSelectorTrigger,
+} from '@/components/ai-elements/model-selector'
+import { Suggestion, Suggestions } from '@/components/ai-elements/suggestion'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import {
   Dialog,
@@ -27,7 +39,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { SquarePenIcon } from 'lucide-react'
+import { CheckIcon, ChevronsUpDownIcon, MessageSquareIcon, SquarePenIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
@@ -43,6 +55,18 @@ interface ChatProps<TDataPanelData> {
   conversationId: string | null
   setConversationId: (id: string | null) => void
   dataPanelPlugin: AgentDataPanelPlugin<TDataPanelData>
+  quickSuggestions?: string[]
+}
+
+const DEFAULT_QUICK_SUGGESTIONS = ['What can you do?', 'Explain your available tools in detail.']
+
+function getSourceTitle(url: string): string {
+  try {
+    const parsedUrl = new URL(url)
+    return parsedUrl.hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
 }
 
 const Chat = <TDataPanelData,>({
@@ -50,8 +74,10 @@ const Chat = <TDataPanelData,>({
   conversationId,
   setConversationId,
   dataPanelPlugin,
+  quickSuggestions = DEFAULT_QUICK_SUGGESTIONS,
 }: ChatProps<TDataPanelData>) => {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
+  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [systemPromptOverride, setSystemPromptOverride] = useState<string | null>(null)
   const [systemPromptDraft, setSystemPromptDraft] = useState<string>('')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)
@@ -86,6 +112,7 @@ const Chat = <TDataPanelData,>({
     queryKey: ['chat-config', apiBasePath],
   })
   const model = selectedModel ?? configQuery.data?.models[0]?.id ?? ''
+  const modelName = configQuery.data?.models.find((entry) => entry.id === model)?.name ?? model
   const systemPrompt = systemPromptOverride ?? configQuery.data?.defaultSystemPrompt ?? ''
 
   useEffect(() => {
@@ -131,34 +158,69 @@ const Chat = <TDataPanelData,>({
     <div className="flex h-full min-h-0 flex-col">
       <Conversation className="h-full">
         <ConversationContent>
-          {messages.map((message) => (
-            <div key={message.id}>
-              {message.parts.filter((part) => part.type === 'source-url').length > 0 && (
-                <Sources>
-                  <SourcesTrigger count={message.parts.filter((part) => part.type === 'source-url').length} />
-                  {message.parts
-                    .filter((part) => part.type === 'source-url')
-                    .map((part, i) => (
-                      <SourcesContent key={`${message.id}-${i}`}>
-                        <Source key={`${message.id}-${i}`} href={part.url} title={part.url} />
-                      </SourcesContent>
-                    ))}
-                </Sources>
-              )}
-              {message.parts.map((part, i) => (
-                <Part
-                  key={`${message.id}-${i}`}
-                  part={part}
-                  message={message}
-                  status={status}
-                  index={i}
-                  regen={regen}
-                  addToolApprovalResponse={handleToolApprovalResponse}
-                  lastMessage={message.id === messages.at(-1)?.id}
-                />
-              ))}
-            </div>
-          ))}
+          {messages.length === 0 && (
+            <ConversationEmptyState
+              description="Ask a question to begin."
+              icon={<MessageSquareIcon className="size-8 text-primary/80" />}
+              className="rounded-xl border border-dashed bg-linear-to-b from-muted/45 to-background"
+              title="Start a conversation"
+            >
+              <Suggestions className="mt-3 w-full max-w-2xl">
+                {quickSuggestions.map((suggestion: string) => (
+                  <Suggestion
+                    className="rounded-lg border-muted-foreground/25 bg-background/70 text-xs hover:bg-accent"
+                    key={suggestion}
+                    onClick={() => {
+                      setInput(suggestion)
+                      textareaRef.current?.focus()
+                    }}
+                    suggestion={suggestion}
+                    size="sm"
+                    variant="outline"
+                  />
+                ))}
+              </Suggestions>
+            </ConversationEmptyState>
+          )}
+          {messages.map((message) => {
+            const sourceParts = message.parts.filter((part) => part.type === 'source-url')
+            const nonSourceParts = message.parts
+              .map((part, index) => ({ part, index }))
+              .filter(({ part }) => part.type !== 'source-url')
+
+            return (
+              <div key={message.id}>
+                {sourceParts.length > 0 && (
+                  <Sources>
+                    <SourcesTrigger count={sourceParts.length} />
+                    <SourcesContent>
+                      {sourceParts.map((part, i) => (
+                        <Source
+                          href={part.url}
+                          key={`${message.id}-${part.url}-${i}`}
+                          title={getSourceTitle(part.url)}
+                        >
+                          {getSourceTitle(part.url)}
+                        </Source>
+                      ))}
+                    </SourcesContent>
+                  </Sources>
+                )}
+                {nonSourceParts.map(({ part, index }) => (
+                  <Part
+                    key={`${message.id}-${index}`}
+                    part={part}
+                    message={message}
+                    status={status}
+                    index={index}
+                    regen={regen}
+                    addToolApprovalResponse={handleToolApprovalResponse}
+                    lastMessage={message.id === messages.at(-1)?.id}
+                  />
+                ))}
+              </div>
+            )
+          })}
           {status === 'submitted' && <Loader />}
           {status === 'error' && error && (
             <div className="px-4 py-3 mx-4 my-2 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
@@ -224,23 +286,39 @@ const Chat = <TDataPanelData,>({
                 </Dialog>
               )}
               {configQuery.data && model && (
-                <PromptInputModelSelect
-                  onValueChange={(value) => {
-                    setSelectedModel(value)
-                  }}
-                  value={model}
-                >
-                  <PromptInputModelSelectTrigger>
-                    <PromptInputModelSelectValue />
-                  </PromptInputModelSelectTrigger>
-                  <PromptInputModelSelectContent>
-                    {configQuery.data.models.map((entry) => (
-                      <PromptInputModelSelectItem key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </PromptInputModelSelectItem>
-                    ))}
-                  </PromptInputModelSelectContent>
-                </PromptInputModelSelect>
+                <ModelSelector open={isModelSelectorOpen} onOpenChange={setIsModelSelectorOpen}>
+                  <ModelSelectorTrigger asChild>
+                    <PromptInputButton className="min-w-44 justify-between border border-transparent px-2.5 hover:border-border">
+                      <span className="truncate text-left">{modelName}</span>
+                      <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
+                    </PromptInputButton>
+                  </ModelSelectorTrigger>
+                  <ModelSelectorContent className="sm:max-w-md">
+                    <ModelSelectorInput placeholder="Search models..." />
+                    <ModelSelectorList>
+                      <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
+                      <ModelSelectorGroup>
+                        {configQuery.data.models.map((entry) => {
+                          const isSelected = entry.id === model
+
+                          return (
+                            <ModelSelectorItem
+                              key={entry.id}
+                              onSelect={(value: string) => {
+                                setSelectedModel(value)
+                                setIsModelSelectorOpen(false)
+                              }}
+                              value={entry.id}
+                            >
+                              <ModelSelectorName>{entry.name}</ModelSelectorName>
+                              {isSelected && <CheckIcon className="size-4" />}
+                            </ModelSelectorItem>
+                          )
+                        })}
+                      </ModelSelectorGroup>
+                    </ModelSelectorList>
+                  </ModelSelectorContent>
+                </ModelSelector>
               )}
               <DataPanelToggleButton
                 hasData={hasDataPanelData}

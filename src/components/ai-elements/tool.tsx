@@ -63,7 +63,10 @@ export const ToolHeader = ({ className, type, state, ...props }: ToolHeaderProps
   const toolIcon = getToolIcon(toolId, 'size-4 text-muted-foreground')
 
   return (
-    <CollapsibleTrigger className={cn('flex w-full items-center justify-between gap-4 p-3', className)} {...props}>
+    <CollapsibleTrigger
+      className={cn('group flex w-full items-center justify-between gap-4 p-3', className)}
+      {...props}
+    >
       <div className="flex items-center gap-2">
         {toolIcon}
         <span className="font-medium text-sm">{toolId}</span>
@@ -141,7 +144,7 @@ export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutpu
             </DialogHeader>
             <div className="space-y-4">
               <div className="max-h-96 overflow-auto rounded-md bg-destructive/10 p-4 text-destructive text-sm">
-                <pre className="whitespace-pre-wrap break-words">{errorText}</pre>
+                <pre className="whitespace-pre-wrap wrap-break-word">{errorText}</pre>
               </div>
               <Button variant="outline" size="sm" onClick={copyError}>
                 <CopyIcon className="mr-1.5 size-4" />

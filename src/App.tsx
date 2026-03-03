@@ -7,6 +7,18 @@ import { arxivDataPanelPlugin } from './features/arxiv-agent/arxiv-data-panel-pl
 import { sqlDataPanelPlugin } from './features/sql-agent/sql-data-panel.tsx'
 import { cn } from './lib/utils.ts'
 
+const SQL_QUICK_SUGGESTIONS = [
+  'List the top 5 customers by total revenue with SQL and explain each clause.',
+  'Find monthly sales trends for the last 12 months and suggest one actionable insight.',
+  'Write a query to detect duplicate rows in a table and show how to fix them safely.',
+]
+
+const ARXIV_QUICK_SUGGESTIONS = [
+  'Find recent arXiv papers on retrieval-augmented generation and summarize key approaches.',
+  'Compare 3 arXiv papers on multimodal agents with strengths, limitations, and datasets.',
+  'Give me a reading order for arXiv papers to learn transformer interpretability quickly.',
+]
+
 interface AgentPageConfig<TData> {
   kind: 'sql' | 'arxiv'
   apiBasePath: string
@@ -71,6 +83,7 @@ export default function App({ kind, conversationId, onConversationIdChange }: Ap
               conversationId={conversationId}
               setConversationId={onConversationIdChange}
               dataPanelPlugin={page.dataPanelPlugin}
+              quickSuggestions={SQL_QUICK_SUGGESTIONS}
             />
           ) : (
             <Chat
@@ -78,6 +91,7 @@ export default function App({ kind, conversationId, onConversationIdChange }: Ap
               conversationId={conversationId}
               setConversationId={onConversationIdChange}
               dataPanelPlugin={page.dataPanelPlugin}
+              quickSuggestions={ARXIV_QUICK_SUGGESTIONS}
             />
           )}
         </div>

@@ -1,8 +1,15 @@
 import { Message, MessageContent } from '@/components/ai-elements/message'
 
 import { Actions, Action } from '@/components/ai-elements/actions'
+import {
+  Confirmation,
+  ConfirmationAccepted,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRejected,
+  ConfirmationRequest,
+} from '@/components/ai-elements/confirmation'
 import { Response } from '@/components/ai-elements/response'
-import { Button } from '@/components/ui/button'
 import { CopyIcon, RefreshCcwIcon } from 'lucide-react'
 import type { UIDataTypes, UIMessagePart, UITools, UIMessage } from 'ai'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
@@ -38,6 +45,16 @@ function copy(text: string) {
   })
 }
 
+function shouldOpenTool(state: string): boolean {
+  return (
+    state === 'approval-requested' ||
+    state === 'approval-responded' ||
+    state === 'output-available' ||
+    state === 'output-denied' ||
+    state === 'output-error'
+  )
+}
+
 export function Part({ part, message, status, regen, addToolApprovalResponse, index, lastMessage }: PartProps) {
   if (part.type === 'text') {
     return (
@@ -70,13 +87,21 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
       </div>
     )
   } else if (part.type === 'reasoning') {
+    const firstReasoningIndex = message.parts.findIndex((candidate) => candidate.type === 'reasoning')
+    if (index !== firstReasoningIndex) {
+      return null
+    }
+
+    const reasoningText = message.parts
+      .filter((candidate) => candidate.type === 'reasoning')
+      .map((candidate) => candidate.text)
+      .join('\n\n')
+    const isReasoningStreaming = status === 'streaming' && lastMessage && message.parts.at(-1)?.type === 'reasoning'
+
     return (
-      <Reasoning
-        className="w-full"
-        isStreaming={status === 'streaming' && index === message.parts.length - 1 && lastMessage}
-      >
+      <Reasoning className="w-full" isStreaming={isReasoningStreaming}>
         <ReasoningTrigger />
-        <ReasoningContent>{part.text}</ReasoningContent>
+        <ReasoningContent>{reasoningText}</ReasoningContent>
       </Reasoning>
     )
   } else if (part.type === 'dynamic-tool') {
@@ -84,80 +109,96 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
     const parsedOutput = part.state === 'output-available' ? parseMaybeJson(part.output) : undefined
 
     return (
-      <Tool>
+      <Tool defaultOpen={shouldOpenTool(part.state)}>
         <ToolHeader type={`tool-${part.toolName}`} state={part.state} />
         <ToolContent>
           <ToolInput input={parsedInput} />
-          {part.state === 'approval-requested' && (
-            <div className="space-y-2 p-4">
-              <p className="text-sm">{getToolApprovalLabel(`tool-${part.toolName}`, parsedInput)}</p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    addToolApprovalResponse({ id: part.approval.id, approved: true })
-                  }}
-                >
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    addToolApprovalResponse({ id: part.approval.id, approved: false })
-                  }}
-                >
-                  Deny
-                </Button>
-              </div>
-            </div>
-          )}
-          {part.state === 'output-denied' && <p className="p-4 text-sm">Tool execution was denied.</p>}
+          <Confirmation approval={part.approval} state={part.state}>
+            <ConfirmationRequest>{getToolApprovalLabel(`tool-${part.toolName}`, parsedInput)}</ConfirmationRequest>
+            <ConfirmationAccepted>Tool execution approved.</ConfirmationAccepted>
+            <ConfirmationRejected>Tool execution denied.</ConfirmationRejected>
+            <ConfirmationActions>
+              <ConfirmationAction
+                onClick={() => {
+                  if (!part.approval) {
+                    return
+                  }
+                  addToolApprovalResponse({ id: part.approval.id, approved: false })
+                }}
+                variant="outline"
+              >
+                Deny
+              </ConfirmationAction>
+              <ConfirmationAction
+                onClick={() => {
+                  if (!part.approval) {
+                    return
+                  }
+                  addToolApprovalResponse({ id: part.approval.id, approved: true })
+                }}
+              >
+                Approve
+              </ConfirmationAction>
+            </ConfirmationActions>
+          </Confirmation>
           {(part.state === 'output-available' || part.state === 'output-error') && (
             <ToolOutput
               errorText={part.errorText}
-              output={<CodeBlock code={JSON.stringify(parsedOutput, null, 2)} language="json" />}
+              output={
+                part.state === 'output-available' ? (
+                  <CodeBlock code={JSON.stringify(parsedOutput, null, 2)} language="json" />
+                ) : null
+              }
             />
           )}
         </ToolContent>
       </Tool>
     )
   } else if ('toolCallId' in part) {
-    // return <div>{JSON.stringify(part)}</div>
+    const parsedInput = parseMaybeJson(part.input)
+    const parsedOutput = part.state === 'output-available' ? parseMaybeJson(part.output) : undefined
+
     return (
-      <Tool>
+      <Tool defaultOpen={shouldOpenTool(part.state)}>
         <ToolHeader type={part.type} state={part.state} />
         <ToolContent>
-          <ToolInput input={part.input} />
-          {part.state === 'approval-requested' && (
-            <div className="space-y-2 p-4">
-              <p className="text-sm">{getToolApprovalLabel(part.type, part.input)}</p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    addToolApprovalResponse({ id: part.approval.id, approved: true })
-                  }}
-                >
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    addToolApprovalResponse({ id: part.approval.id, approved: false })
-                  }}
-                >
-                  Deny
-                </Button>
-              </div>
-            </div>
-          )}
-          {part.state === 'output-denied' && <p className="p-4 text-sm">Tool execution was denied.</p>}
+          <ToolInput input={parsedInput} />
+          <Confirmation approval={part.approval} state={part.state}>
+            <ConfirmationRequest>{getToolApprovalLabel(part.type, parsedInput)}</ConfirmationRequest>
+            <ConfirmationAccepted>Tool execution approved.</ConfirmationAccepted>
+            <ConfirmationRejected>Tool execution denied.</ConfirmationRejected>
+            <ConfirmationActions>
+              <ConfirmationAction
+                onClick={() => {
+                  if (!part.approval) {
+                    return
+                  }
+                  addToolApprovalResponse({ id: part.approval.id, approved: false })
+                }}
+                variant="outline"
+              >
+                Deny
+              </ConfirmationAction>
+              <ConfirmationAction
+                onClick={() => {
+                  if (!part.approval) {
+                    return
+                  }
+                  addToolApprovalResponse({ id: part.approval.id, approved: true })
+                }}
+              >
+                Approve
+              </ConfirmationAction>
+            </ConfirmationActions>
+          </Confirmation>
           {(part.state === 'output-available' || part.state === 'output-error') && (
             <ToolOutput
               errorText={part.errorText}
-              output={<CodeBlock code={JSON.stringify(part.output, null, 2)} language="json" />}
+              output={
+                part.state === 'output-available' ? (
+                  <CodeBlock code={JSON.stringify(parsedOutput, null, 2)} language="json" />
+                ) : null
+              }
             />
           )}
         </ToolContent>
