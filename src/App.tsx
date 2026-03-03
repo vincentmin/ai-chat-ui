@@ -8,9 +8,9 @@ import { sqlDataPanelPlugin } from './features/sql-agent/sql-data-panel.tsx'
 import { cn } from './lib/utils.ts'
 
 const SQL_QUICK_SUGGESTIONS = [
-  'List the top 5 customers by total revenue with SQL and explain each clause.',
-  'Find monthly sales trends for the last 12 months and suggest one actionable insight.',
-  'Write a query to detect duplicate rows in a table and show how to fix them safely.',
+  'List the top 5 artists.',
+  'Show me the total number of songs in the database.',
+  'Which artist has the most songs?',
 ]
 
 const ARXIV_QUICK_SUGGESTIONS = [

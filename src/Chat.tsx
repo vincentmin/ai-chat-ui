@@ -8,9 +8,9 @@ import { Loader } from '@/components/ai-elements/loader'
 import {
   PromptInput,
   PromptInputButton,
+  PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
-  PromptInputToolbar,
   PromptInputTools,
 } from '@/components/ai-elements/prompt-input'
 import {
@@ -40,7 +40,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { CheckIcon, ChevronsUpDownIcon, MessageSquareIcon, SquarePenIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
@@ -232,7 +232,11 @@ const Chat = <TDataPanelData,>({
       </Conversation>
 
       <div className="sticky bottom-0 p-3">
-        <PromptInput onSubmit={handleSubmit}>
+        <PromptInput
+          onSubmit={(_message, event) => {
+            handleSubmit(event as unknown as SyntheticEvent)
+          }}
+        >
           <PromptInputTextarea
             ref={textareaRef}
             onChange={(e) => {
@@ -241,7 +245,7 @@ const Chat = <TDataPanelData,>({
             value={input}
             autoFocus={true}
           />
-          <PromptInputToolbar>
+          <PromptInputFooter>
             <PromptInputTools>
               {configQuery.data?.canOverrideSystemPrompt && (
                 <Dialog open={isPromptDialogOpen} onOpenChange={setIsPromptDialogOpen}>
@@ -327,7 +331,7 @@ const Chat = <TDataPanelData,>({
               />
             </PromptInputTools>
             <PromptInputSubmit disabled={!input} status={status} />
-          </PromptInputToolbar>
+          </PromptInputFooter>
         </PromptInput>
       </div>
     </div>
