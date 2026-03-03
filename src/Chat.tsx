@@ -25,7 +25,6 @@ import {
   ModelSelectorTrigger,
 } from '@/components/ai-elements/model-selector'
 import { Suggestion, Suggestions } from '@/components/ai-elements/suggestion'
-import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import {
   Dialog,
   DialogClose,
@@ -46,7 +45,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AgentChatDataPanelLayout } from '@/components/agent-chat-data-panel-layout'
 import type { AgentDataPanelPlugin } from '@/features/agent-data-panel-plugin'
 import { useConversationChatState } from './hooks/useConversationChatState'
-import { Part } from './Part'
+import { Message } from './Message'
 import { getConfig } from '@/lib/api'
 import { useChatSubmit } from '@/hooks/useChatSubmit'
 
@@ -59,15 +58,6 @@ interface ChatProps<TDataPanelData> {
 }
 
 const DEFAULT_QUICK_SUGGESTIONS = ['What can you do?', 'Explain your available tools in detail.']
-
-function getSourceTitle(url: string): string {
-  try {
-    const parsedUrl = new URL(url)
-    return parsedUrl.hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
 
 const Chat = <TDataPanelData,>({
   apiBasePath,
@@ -183,42 +173,15 @@ const Chat = <TDataPanelData,>({
             </ConversationEmptyState>
           )}
           {messages.map((message) => {
-            const sourceParts = message.parts.filter((part) => part.type === 'source-url')
-            const nonSourceParts = message.parts
-              .map((part, index) => ({ part, index }))
-              .filter(({ part }) => part.type !== 'source-url')
-
             return (
-              <div key={message.id}>
-                {sourceParts.length > 0 && (
-                  <Sources>
-                    <SourcesTrigger count={sourceParts.length} />
-                    <SourcesContent>
-                      {sourceParts.map((part, i) => (
-                        <Source
-                          href={part.url}
-                          key={`${message.id}-${part.url}-${i}`}
-                          title={getSourceTitle(part.url)}
-                        >
-                          {getSourceTitle(part.url)}
-                        </Source>
-                      ))}
-                    </SourcesContent>
-                  </Sources>
-                )}
-                {nonSourceParts.map(({ part, index }) => (
-                  <Part
-                    key={`${message.id}-${index}`}
-                    part={part}
-                    message={message}
-                    status={status}
-                    index={index}
-                    regen={regen}
-                    addToolApprovalResponse={handleToolApprovalResponse}
-                    lastMessage={message.id === messages.at(-1)?.id}
-                  />
-                ))}
-              </div>
+              <Message
+                key={message.id}
+                message={message}
+                status={status}
+                regen={regen}
+                addToolApprovalResponse={handleToolApprovalResponse}
+                lastMessage={message.id === messages.at(-1)?.id}
+              />
             )
           })}
           {status === 'submitted' && <Loader />}

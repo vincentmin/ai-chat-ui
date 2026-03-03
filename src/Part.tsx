@@ -12,7 +12,6 @@ import {
 import { Response } from '@/components/ai-elements/response'
 import { CopyIcon, RefreshCcwIcon } from 'lucide-react'
 import type { UIDataTypes, UIMessagePart, UITools, UIMessage } from 'ai'
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 import { Tool, ToolHeader, ToolInput, ToolOutput, ToolContent } from '@/components/ai-elements/tool'
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { getToolApprovalLabel } from '@/lib/tool-approval-labels'
@@ -20,11 +19,9 @@ import { getToolApprovalLabel } from '@/lib/tool-approval-labels'
 interface PartProps {
   part: UIMessagePart<UIDataTypes, UITools>
   message: UIMessage
-  status: string
   regen: (id: string) => void
   addToolApprovalResponse: (response: { id: string; approved: boolean }) => void
   index: number
-  lastMessage: boolean
 }
 
 function parseMaybeJson(value: unknown): unknown {
@@ -49,7 +46,34 @@ function shouldOpenTool(state: string): boolean {
   return state === 'approval-requested'
 }
 
-export function Part({ part, message, status, regen, addToolApprovalResponse, index, lastMessage }: PartProps) {
+function getToolHeaderType(part: UIMessagePart<UIDataTypes, UITools>): `tool-${string}` | null {
+  if (part.type === 'dynamic-tool') {
+    return `tool-${part.toolName}`
+  }
+
+  if ('toolCallId' in part && part.type.startsWith('tool-')) {
+    return part.type
+  }
+
+  return null
+}
+
+export function Part({ part, message, regen, addToolApprovalResponse, index }: PartProps) {
+  const handleRetry = () => {
+    regen(message.id)
+  }
+
+  const handleCopy = (text: string) => {
+    copy(text)
+  }
+
+  const handleToolApproval = (approvalId: string | undefined, approved: boolean) => {
+    if (!approvalId) {
+      return
+    }
+    addToolApprovalResponse({ id: approvalId, approved })
+  }
+
   if (part.type === 'text') {
     return (
       <div className="py-4">
@@ -60,17 +84,12 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
         </Message>
         {message.role === 'assistant' && index === message.parts.length - 1 && (
           <Actions className="mt-1">
-            <Action
-              onClick={() => {
-                regen(message.id)
-              }}
-              label="Retry"
-            >
+            <Action onClick={handleRetry} label="Retry">
               <RefreshCcwIcon className="size-3" />
             </Action>
             <Action
               onClick={() => {
-                copy(part.text)
+                handleCopy(part.text)
               }}
               label="Copy"
             >
@@ -80,44 +99,28 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
         )}
       </div>
     )
-  } else if (part.type === 'reasoning') {
-    const firstReasoningIndex = message.parts.findIndex((candidate) => candidate.type === 'reasoning')
-    if (index !== firstReasoningIndex) {
+  } else if (part.type === 'dynamic-tool' || 'toolCallId' in part) {
+    const headerType = getToolHeaderType(part)
+    if (!headerType) {
       return null
     }
 
-    const reasoningText = message.parts
-      .filter((candidate) => candidate.type === 'reasoning')
-      .map((candidate) => candidate.text)
-      .join('\n\n')
-    const isReasoningStreaming = status === 'streaming' && lastMessage && message.parts.at(-1)?.type === 'reasoning'
-
-    return (
-      <Reasoning className="w-full" isStreaming={isReasoningStreaming}>
-        <ReasoningTrigger />
-        <ReasoningContent>{reasoningText}</ReasoningContent>
-      </Reasoning>
-    )
-  } else if (part.type === 'dynamic-tool') {
     const parsedInput = parseMaybeJson(part.input)
     const parsedOutput = part.state === 'output-available' ? parseMaybeJson(part.output) : undefined
 
     return (
       <Tool defaultOpen={shouldOpenTool(part.state)}>
-        <ToolHeader type={`tool-${part.toolName}`} state={part.state} />
+        <ToolHeader type={headerType} state={part.state} />
         <ToolContent>
           <ToolInput input={parsedInput} />
           <Confirmation approval={part.approval} state={part.state}>
-            <ConfirmationRequest>{getToolApprovalLabel(`tool-${part.toolName}`, parsedInput)}</ConfirmationRequest>
+            <ConfirmationRequest>{getToolApprovalLabel(headerType, parsedInput)}</ConfirmationRequest>
             <ConfirmationAccepted>Tool execution approved.</ConfirmationAccepted>
             <ConfirmationRejected>Tool execution denied.</ConfirmationRejected>
             <ConfirmationActions>
               <ConfirmationAction
                 onClick={() => {
-                  if (!part.approval) {
-                    return
-                  }
-                  addToolApprovalResponse({ id: part.approval.id, approved: false })
+                  handleToolApproval(part.approval?.id, false)
                 }}
                 variant="outline"
               >
@@ -125,60 +128,7 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
               </ConfirmationAction>
               <ConfirmationAction
                 onClick={() => {
-                  if (!part.approval) {
-                    return
-                  }
-                  addToolApprovalResponse({ id: part.approval.id, approved: true })
-                }}
-              >
-                Approve
-              </ConfirmationAction>
-            </ConfirmationActions>
-          </Confirmation>
-          {(part.state === 'output-available' || part.state === 'output-error') && (
-            <ToolOutput
-              errorText={part.errorText}
-              output={
-                part.state === 'output-available' ? (
-                  <CodeBlock code={JSON.stringify(parsedOutput, null, 2)} language="json" />
-                ) : null
-              }
-            />
-          )}
-        </ToolContent>
-      </Tool>
-    )
-  } else if ('toolCallId' in part) {
-    const parsedInput = parseMaybeJson(part.input)
-    const parsedOutput = part.state === 'output-available' ? parseMaybeJson(part.output) : undefined
-
-    return (
-      <Tool defaultOpen={shouldOpenTool(part.state)}>
-        <ToolHeader type={part.type} state={part.state} />
-        <ToolContent>
-          <ToolInput input={parsedInput} />
-          <Confirmation approval={part.approval} state={part.state}>
-            <ConfirmationRequest>{getToolApprovalLabel(part.type, parsedInput)}</ConfirmationRequest>
-            <ConfirmationAccepted>Tool execution approved.</ConfirmationAccepted>
-            <ConfirmationRejected>Tool execution denied.</ConfirmationRejected>
-            <ConfirmationActions>
-              <ConfirmationAction
-                onClick={() => {
-                  if (!part.approval) {
-                    return
-                  }
-                  addToolApprovalResponse({ id: part.approval.id, approved: false })
-                }}
-                variant="outline"
-              >
-                Deny
-              </ConfirmationAction>
-              <ConfirmationAction
-                onClick={() => {
-                  if (!part.approval) {
-                    return
-                  }
-                  addToolApprovalResponse({ id: part.approval.id, approved: true })
+                  handleToolApproval(part.approval?.id, true)
                 }}
               >
                 Approve
@@ -199,4 +149,6 @@ export function Part({ part, message, status, regen, addToolApprovalResponse, in
       </Tool>
     )
   }
+
+  return null
 }
