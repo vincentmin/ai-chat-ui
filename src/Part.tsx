@@ -46,13 +46,7 @@ function copy(text: string) {
 }
 
 function shouldOpenTool(state: string): boolean {
-  return (
-    state === 'approval-requested' ||
-    state === 'approval-responded' ||
-    state === 'output-available' ||
-    state === 'output-denied' ||
-    state === 'output-error'
-  )
+  return state === 'approval-requested'
 }
 
 export function Part({ part, message, status, regen, addToolApprovalResponse, index, lastMessage }: PartProps) {
