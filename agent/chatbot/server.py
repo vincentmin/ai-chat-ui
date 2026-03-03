@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
@@ -13,6 +14,7 @@ from .lifespan import lifespan
 from .settings import get_settings
 from .sql_agent import agent as sql_agent
 
+logging.basicConfig(level=logging.INFO)
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
 # have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
