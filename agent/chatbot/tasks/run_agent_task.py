@@ -136,6 +136,10 @@ async def run_agent_task(
             adapter.messages,
             adapter.deferred_tool_results,
         )
+        # `UIAdapter.run_stream_native` falls back to `self.deferred_tool_results`
+        # whenever the explicit argument is `None`. Override the cached property
+        # value so stale approvals from the request payload are not reintroduced.
+        adapter.__dict__['deferred_tool_results'] = deferred_tool_results
         model_ref = resolve_model_ref(agent_key, selected_model)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:
