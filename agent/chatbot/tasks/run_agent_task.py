@@ -28,6 +28,7 @@ from ..streaming.redis_stream import (
 from .agent_registry import get_agent, resolve_model_ref
 from .broker import broker
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
