@@ -28,7 +28,6 @@ class ChatRequestExtra(
 ):
     model: str | None = None
     system_prompt: str | None = None
-    agent_key: str | None = None
 
 
 class ConversationSummary(
