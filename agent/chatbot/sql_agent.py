@@ -60,7 +60,7 @@ agent = pydantic_ai.Agent(
 )
 
 
-@agent.tool_plain(requires_approval=True)
+@agent.tool_plain
 def query(sql_query: str) -> str:
     """Run a SQL query and return a truncated preview of the result."""
     try:
@@ -74,7 +74,7 @@ def query(sql_query: str) -> str:
         raise pydantic_ai.ModelRetry(f'Failed to run SQL query: {e}') from e
 
 
-@agent.tool_plain(requires_approval=True)
+@agent.tool_plain
 def display(sql_query: str) -> pydantic_ai.ToolReturn:
     """Run a SQL query and send full results to the frontend as data metadata."""
     try:
