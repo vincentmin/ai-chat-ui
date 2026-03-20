@@ -71,13 +71,16 @@ export function useConversationChatState({
     queryKey: ['conversation', apiBasePath, conversationId],
     queryFn: () => getConversationMessages(apiBasePath, conversationId!),
     enabled: !!conversationId,
-    staleTime: Infinity,
+    staleTime: pollForActivity ? 0 : Infinity,
+    refetchInterval: pollForActivity ? 4000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
 
   const hydratedConversationIdRef = useRef<string | null>(null)
   const resumedConversationIdRef = useRef<string | null>(null)
+  /** Tracks message count at last hydration so we can re-hydrate when new backend data arrives (team mode). */
+  const lastHydratedMessageCountRef = useRef<number>(-1)
 
   const chat = useChat({
     id: conversationId ?? undefined,
@@ -97,6 +100,7 @@ export function useConversationChatState({
 
       hydratedConversationIdRef.current = null
       resumedConversationIdRef.current = null
+      lastHydratedMessageCountRef.current = -1
 
       if (hadHydratedConversation || hadResumedConversation) {
         setMessages([])
@@ -117,11 +121,17 @@ export function useConversationChatState({
       return
     }
 
-    if (hydratedConversationIdRef.current !== conversationId) {
-      const historyMessages = messagesQuery.data?.messages ?? []
+    const historyMessages = messagesQuery.data?.messages ?? []
+    const messageCount = historyMessages.length
+    const isNewConversation = hydratedConversationIdRef.current !== conversationId
+    const hasNewBackendMessages =
+      pollForActivity && messageCount > 0 && messageCount !== lastHydratedMessageCountRef.current
+
+    if (isNewConversation || hasNewBackendMessages) {
       setMessages(historyMessages)
       hydrateFromMessages(historyMessages)
       hydratedConversationIdRef.current = conversationId
+      lastHydratedMessageCountRef.current = messageCount
     }
 
     if (resumedConversationIdRef.current === conversationId) {

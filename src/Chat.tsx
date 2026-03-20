@@ -148,11 +148,13 @@ const Chat = <TDataPanelData,>({
     })
   }
 
+  const visibleMessages = messages.filter((m) => m.role !== 'system')
+
   const chatPane = (
     <div className="flex h-full min-h-0 flex-col">
       <Conversation className="h-full">
         <ConversationContent>
-          {messages.length === 0 && (
+          {visibleMessages.length === 0 && (
             <ConversationEmptyState
               description="Ask a question to begin."
               icon={<MessageSquareIcon className="size-8 text-primary/80" />}
@@ -176,18 +178,16 @@ const Chat = <TDataPanelData,>({
               </Suggestions>
             </ConversationEmptyState>
           )}
-          {messages.map((message) => {
-            return (
-              <Message
-                key={message.id}
-                message={message}
-                status={status}
-                regen={regen}
-                addToolApprovalResponse={handleToolApprovalResponse}
-                lastMessage={message.id === messages.at(-1)?.id}
-              />
-            )
-          })}
+          {visibleMessages.map((message) => (
+            <Message
+              key={message.id}
+              message={message}
+              status={status}
+              regen={regen}
+              addToolApprovalResponse={handleToolApprovalResponse}
+              lastMessage={message.id === visibleMessages.at(-1)?.id}
+            />
+          ))}
           {status === 'submitted' && <Loader />}
           {status === 'error' && error && (
             <div className="px-4 py-3 mx-4 my-2 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
