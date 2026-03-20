@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
 from pydantic_ai.ui.vercel_ai.response_types import DoneChunk, ErrorChunk
@@ -40,7 +41,13 @@ from ..streaming.redis_stream import (
     publish_chunk,
     publish_terminal,
 )
-from .agent_registry import get_agent, get_team_agents, resolve_model_ref
+from ..team_tools import tell
+from .agent_registry import (
+    get_agent,
+    get_team_agents,
+    get_team_instructions,
+    resolve_model_ref,
+)
 from .broker import broker
 
 logging.basicConfig(level=logging.INFO)
@@ -209,6 +216,11 @@ async def run_agent_task(
             message_history = [*persisted_history, *injected]
 
         model_ref = resolve_model_ref(agent_key, selected_model)
+        tell_toolset = FunctionToolset([tell])
+        team_instructions = get_team_instructions(agent_key)
+        run_instructions: list[str] = [team_instructions]
+        if system_prompt:
+            run_instructions.append(system_prompt)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:
             with db_runtime.session() as session:
@@ -225,7 +237,8 @@ async def run_agent_task(
             output_type=[str, DeferredToolRequests],
             deferred_tool_results=deferred_tool_results,
             model=model_ref,
-            instructions=system_prompt,
+            instructions=run_instructions,
+            toolsets=[tell_toolset],
             on_complete=on_complete,
             deps=deps,
             message_history=message_history,

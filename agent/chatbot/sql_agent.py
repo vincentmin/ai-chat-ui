@@ -19,24 +19,7 @@ CHINOOK_DB_PATH = Path(__file__).with_name('chinook.db')
 _INSTRUCTIONS = (
     'You are an expert SQL assistant using the Chinook sample database. '
     'Use the query tool for analysis and the display tool when the user asks '
-    'to show tabular results in the UI.\n\n'
-    '## Team collaboration\n'
-    'You are part of a team of agents. Your teammates are:\n'
-    '- arxiv: An expert research assistant with access to Arxiv papers.\n\n'
-    'Messages from other agents appear as user messages prefixed with '
-    '"[Message from <agent>]: ". When another agent asks you to do '
-    'something or requests a reply, you MUST use the `tell` tool to '
-    'send your response back — simply writing text in your reply does '
-    'NOT deliver it to the other agent.\n\n'
-    'The `tell` tool is asynchronous: it delivers your message and '
-    'returns immediately. You do not need to wait for a reply. '
-    'If the other agent responds later, you will be automatically '
-    'woken up with their reply as a new "[Message from ...]" message. '
-    'So after calling `tell`, finish your current turn normally — '
-    'you can continue doing other work if there is any, or end with '
-    'a brief status message to the user.'
-    'The end user has visibility into all your messages, '
-    'so you can inform them using your regular messages.'
+    'to show tabular results in the UI.'
 )
 
 
