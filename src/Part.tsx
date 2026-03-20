@@ -41,7 +41,7 @@ export function Part({ part, message, regen, addToolApprovalResponse, index }: P
       <div className="py-4">
         <Message from={message.role}>
           <MessageContent>
-            <Response>{part.text}</Response>
+            {message.role === 'user' ? <p>{part.text}</p> : <Response>{part.text}</Response>}
           </MessageContent>
         </Message>
         {message.role === 'assistant' && index === message.parts.length - 1 && (

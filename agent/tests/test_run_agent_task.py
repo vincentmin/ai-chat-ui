@@ -254,6 +254,13 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
 
     monkeypatch.setattr(run_agent_task_module, 'drain_mailbox', fake_drain_mailbox)
 
+    async def fake_mailbox_is_empty(_client, _agent_key, _conv_id):
+        return True
+
+    monkeypatch.setattr(
+        run_agent_task_module, 'mailbox_is_empty', fake_mailbox_is_empty
+    )
+
     await run_agent_task_module.run_agent_task.original_func(
         run_id='run-1',
         conversation_id='conversation-1',
@@ -394,6 +401,13 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
         return []
 
     monkeypatch.setattr(run_agent_task_module, 'drain_mailbox', fake_drain_mailbox)
+
+    async def fake_mailbox_is_empty_fail(_client, _agent_key, _conv_id):
+        return True
+
+    monkeypatch.setattr(
+        run_agent_task_module, 'mailbox_is_empty', fake_mailbox_is_empty_fail
+    )
 
     await run_agent_task_module.run_agent_task.original_func(
         run_id='run-2',

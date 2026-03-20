@@ -109,6 +109,11 @@ const Chat = <TDataPanelData,>({
   const modelName = configQuery.data?.models.find((entry) => entry.id === model)?.name ?? model
   const systemPrompt = systemPromptOverride ?? configQuery.data?.defaultSystemPrompt ?? ''
 
+  // log messages to console
+  useEffect(() => {
+    console.log('Messages:', messages)
+  }, [messages])
+
   useEffect(() => {
     if (isPromptDialogOpen) {
       setSystemPromptDraft(systemPrompt)

@@ -33,7 +33,7 @@ from ..history_processor import (
     create_mailbox_history_processor,
     mailbox_messages_to_model_requests,
 )
-from ..mailbox import drain_mailbox
+from ..mailbox import drain_mailbox, mailbox_is_empty
 from ..settings import get_settings
 from ..streaming.redis_stream import (
     chat_run_stream_key,
@@ -173,6 +173,22 @@ async def run_agent_task(
             )
             adapter.__dict__['deferred_tool_results'] = deferred_tool_results
             message_history: list[ModelMessage] | None = None
+
+            # For team agents, the frontend may be stale (missing messages
+            # from wake-up runs the user hasn't polled yet).  Use the backend
+            # snapshot as canonical history so the agent sees all prior turns.
+            if team_agents and deferred_tool_results is None:
+                with db_runtime.session() as session:
+                    snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+                if snapshot:
+                    persisted = messages_from_json(snapshot.model_messages_json)
+                    adapter_msgs = adapter.messages
+                    if len(persisted) > len(adapter_msgs):
+                        # Snapshot has more messages than the adapter
+                        # (wake-up runs). Use the snapshot as base and keep
+                        # only the final user turn from the adapter.
+                        adapter.__dict__['messages'] = adapter_msgs[-1:]
+                        message_history = persisted
         else:
             # Mailbox-initiated (wake-up) run — load persisted history
             # and drain the mailbox to seed the conversation.
@@ -224,8 +240,8 @@ async def run_agent_task(
 
         # Post-run mailbox check: if new messages arrived during the final
         # model invocation, kick off a follow-up run for ourselves.
-        remaining = await drain_mailbox(redis_client, agent_key, conversation_id)
-        if remaining:
+        # Use non-destructive peek so that the wake-up run can drain them.
+        if not await mailbox_is_empty(redis_client, agent_key, conversation_id):
             await _enqueue_self_wakeup(agent_key, conversation_id)
     except Exception as exc:
         logger.exception('Taskiq worker failed to execute run %s', run_id)
