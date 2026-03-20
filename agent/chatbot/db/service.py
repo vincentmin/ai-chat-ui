@@ -145,3 +145,39 @@ def update_run_status(
     run.updated_at = datetime.now(UTC)
     session.add(run)
     session.commit()
+
+
+def get_team_conversations(
+    session: Session, agent_keys: list[str]
+) -> dict[str, dict[str, AgentRunSnapshot]]:
+    """Return the latest snapshot per (conversation_id, agent_key) across all agents.
+
+    Returns a nested dict: {conversation_id: {agent_key: snapshot}}.
+    """
+    snapshots = session.exec(
+        select(AgentRunSnapshot).where(
+            AgentRunSnapshot.agent_key.in_(agent_keys)  # type: ignore[union-attr]
+        )
+    ).all()
+    result: dict[str, dict[str, AgentRunSnapshot]] = {}
+    for snap in snapshots:
+        conv = result.setdefault(snap.conversation_id, {})
+        current = conv.get(snap.agent_key)
+        if current is None or snap.created_at > current.created_at:
+            conv[snap.agent_key] = snap
+    return result
+
+
+def delete_team_chat_records(
+    session: Session, conversation_id: str, agent_keys: list[str]
+) -> None:
+    """Delete all AgentRunSnapshot records for a conversation across all agents."""
+    snapshots = session.exec(
+        select(AgentRunSnapshot).where(
+            AgentRunSnapshot.conversation_id == conversation_id,
+            AgentRunSnapshot.agent_key.in_(agent_keys),  # type: ignore[union-attr]
+        )
+    ).all()
+    for snapshot in snapshots:
+        session.delete(snapshot)
+    session.commit()

@@ -55,6 +55,8 @@ interface ChatProps<TDataPanelData> {
   setConversationId: (id: string | null) => void
   dataPanelPlugin: AgentDataPanelPlugin<TDataPanelData>
   quickSuggestions?: string[]
+  /** Enable polling for agent-initiated runs (team mode). */
+  pollForActivity?: boolean
 }
 
 const DEFAULT_QUICK_SUGGESTIONS = ['What can you do?', 'Explain your available tools in detail.']
@@ -65,6 +67,7 @@ const Chat = <TDataPanelData,>({
   setConversationId,
   dataPanelPlugin,
   quickSuggestions = DEFAULT_QUICK_SUGGESTIONS,
+  pollForActivity = false,
 }: ChatProps<TDataPanelData>) => {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
@@ -89,6 +92,7 @@ const Chat = <TDataPanelData,>({
     conversationId,
     onData: onDataPart,
     hydrateFromMessages,
+    pollForActivity,
     onFinish: ({ isAbort, isDisconnect, isError }) => {
       if (conversationId && !isAbort && !isDisconnect && !isError) {
         window.dispatchEvent(new Event('conversations-changed'))

@@ -24,3 +24,13 @@ export interface ChatHistoryResponse {
 export interface ConversationsResponse {
   conversations: ConversationEntry[]
 }
+
+export interface TeamAgentInfo {
+  key: string
+  title: string
+  apiBasePath: string
+}
+
+export interface TeamConfig {
+  agents: TeamAgentInfo[]
+}

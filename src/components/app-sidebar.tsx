@@ -27,11 +27,13 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { getConversations, removeConversation } from '@/lib/api'
+import { getConversations, getTeamConversations, removeConversation, removeTeamConversation } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
 import logoSvg from '../assets/logo.svg'
+
+type SidebarMode = 'sql' | 'arxiv' | 'team'
 
 interface AppSidebarProps {
   apiBasePath: string
@@ -41,6 +43,20 @@ interface AppSidebarProps {
   onConversationIdChange: (id: string | null) => void
 }
 
+function getConversationRoute(
+  mode: SidebarMode,
+): '/sql/chat/$conversationId' | '/arxiv/chat/$conversationId' | '/team/chat/$conversationId' {
+  if (mode === 'sql') return '/sql/chat/$conversationId'
+  if (mode === 'arxiv') return '/arxiv/chat/$conversationId'
+  return '/team/chat/$conversationId'
+}
+
+function getNewConversationRoute(mode: SidebarMode): '/sql' | '/arxiv' | '/team' {
+  if (mode === 'sql') return '/sql'
+  if (mode === 'arxiv') return '/arxiv'
+  return '/team'
+}
+
 export function AppSidebar({
   apiBasePath,
   conversationBasePath,
@@ -48,11 +64,14 @@ export function AppSidebar({
   conversationId,
   onConversationIdChange,
 }: AppSidebarProps) {
-  const isSql = conversationBasePath === '/sql'
+  const mode: SidebarMode =
+    conversationBasePath === '/sql' ? 'sql' : conversationBasePath === '/team' ? 'team' : 'arxiv'
+  const conversationRoute = getConversationRoute(mode)
+  const newConversationRoute = getNewConversationRoute(mode)
   const queryClient = useQueryClient()
   const conversationsQueryKey = useMemo(() => ['conversations', apiBasePath] as const, [apiBasePath])
   const conversationsQuery = useQuery({
-    queryFn: () => getConversations(apiBasePath),
+    queryFn: () => (mode === 'team' ? getTeamConversations() : getConversations(apiBasePath)),
     queryKey: conversationsQueryKey,
   })
   const conversations = conversationsQuery.data?.conversations ?? []
@@ -90,7 +109,11 @@ export function AppSidebar({
     }
 
     const deleteCurrentConversation = async () => {
-      await removeConversation(apiBasePath, conversationToDelete.id)
+      if (mode === 'team') {
+        await removeTeamConversation(conversationToDelete.id)
+      } else {
+        await removeConversation(apiBasePath, conversationToDelete.id)
+      }
       setDeleteDialogOpen(false)
       setConversationToDelete(null)
       await invalidateConversations()
@@ -126,17 +149,10 @@ export function AppSidebar({
             <SidebarMenu className="mb-2">
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Start a new conversation">
-                  {isSql ? (
-                    <Link to="/sql">
-                      <CirclePlus />
-                      <span>New conversation</span>
-                    </Link>
-                  ) : (
-                    <Link to="/arxiv">
-                      <CirclePlus />
-                      <span>New conversation</span>
-                    </Link>
-                  )}
+                  <Link to={newConversationRoute}>
+                    <CirclePlus />
+                    <span>New conversation</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -147,39 +163,21 @@ export function AppSidebar({
                   <SidebarMenuItem key={index} className="group/sidebar-menu-item">
                     <div className="flex items-center gap-1 h-auto">
                       <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
-                        {isSql ? (
-                          <Link
-                            to="/sql/chat/$conversationId"
-                            params={{ conversationId: conversation.id }}
-                            className={cn('h-auto flex items-start gap-2', {
-                              'bg-accent pointer-events-none': conversation.id === conversationId,
-                            })}
-                          >
-                            <MessageCircle className="size-3 mt-1" />
-                            <span className="flex flex-col items-start">
-                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
-                              <span className="text-xs opacity-30">
-                                {new Date(conversation.timestamp).toLocaleString()}
-                              </span>
+                        <Link
+                          to={conversationRoute}
+                          params={{ conversationId: conversation.id }}
+                          className={cn('h-auto flex items-start gap-2', {
+                            'bg-accent pointer-events-none': conversation.id === conversationId,
+                          })}
+                        >
+                          <MessageCircle className="size-3 mt-1" />
+                          <span className="flex flex-col items-start">
+                            <span className="truncate max-w-44">{conversation.firstMessage}</span>
+                            <span className="text-xs opacity-30">
+                              {new Date(conversation.timestamp).toLocaleString()}
                             </span>
-                          </Link>
-                        ) : (
-                          <Link
-                            to="/arxiv/chat/$conversationId"
-                            params={{ conversationId: conversation.id }}
-                            className={cn('h-auto flex items-start gap-2', {
-                              'bg-accent pointer-events-none': conversation.id === conversationId,
-                            })}
-                          >
-                            <MessageCircle className="size-3 mt-1" />
-                            <span className="flex flex-col items-start">
-                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
-                              <span className="text-xs opacity-30">
-                                {new Date(conversation.timestamp).toLocaleString()}
-                              </span>
-                            </span>
-                          </Link>
-                        )}
+                          </span>
+                        </Link>
                       </SidebarMenuButton>
                       <Tooltip>
                         <TooltipTrigger asChild>

@@ -13,6 +13,7 @@ from .chat_router import create_chat_router
 from .lifespan import lifespan
 from .settings import get_settings
 from .sql_agent import agent as sql_agent
+from .team_router import router as team_router
 
 logging.basicConfig(level=logging.INFO)
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't
@@ -46,6 +47,7 @@ app.include_router(
     ),
     prefix='/api/v1/arxiv',
 )
+app.include_router(team_router, prefix='/api/v1/team')
 
 
 async def _stream_arxiv_pdf(pdf_url: str) -> AsyncIterator[bytes]:

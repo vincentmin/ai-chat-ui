@@ -4,6 +4,30 @@ import { useChat } from '@ai-sdk/react'
 import { useEffect, useMemo, useRef } from 'react'
 
 import { getConversationMessages } from '@/lib/api'
+import { useAgentActivityPoller } from './useAgentActivityPoller'
+
+/**
+ * Wraps the global fetch to handle 202 Accepted responses from the chat endpoint.
+ * When the backend returns 202 it means the agent is already active and the user's
+ * message was pushed to its mailbox. We return a synthetic empty-stream response
+ * so the AI SDK transport can complete without error.
+ */
+async function mailboxAwareFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const res = await fetch(input, init)
+  if (res.status === 202) {
+    // Return a 200 with an empty done-stream so the transport completes cleanly.
+    const body = new ReadableStream({
+      start(controller) {
+        controller.close()
+      },
+    })
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }
+  return res
+}
 
 interface ChatFinishEvent {
   isAbort: boolean
@@ -17,6 +41,8 @@ interface UseConversationChatStateOptions {
   onData: (part: unknown) => void
   onFinish: (event: ChatFinishEvent) => void
   hydrateFromMessages: (messages: UIMessage[]) => void
+  /** Enable polling for agent-initiated runs (team mode). */
+  pollForActivity?: boolean
 }
 
 export function useConversationChatState({
@@ -25,6 +51,7 @@ export function useConversationChatState({
   onData,
   onFinish,
   hydrateFromMessages,
+  pollForActivity = false,
 }: UseConversationChatStateOptions) {
   const chatApi = conversationId ? `${apiBasePath}/chat/${conversationId}` : `${apiBasePath}/chat/__pending__`
 
@@ -32,11 +59,12 @@ export function useConversationChatState({
     () =>
       new DefaultChatTransport({
         api: chatApi,
+        fetch: pollForActivity ? mailboxAwareFetch : undefined,
         prepareReconnectToStreamRequest: ({ id }) => ({
           api: `${apiBasePath}/chat/${id}/stream`,
         }),
       }),
-    [chatApi, apiBasePath],
+    [chatApi, apiBasePath, pollForActivity],
   )
 
   const messagesQuery = useQuery({
@@ -113,6 +141,11 @@ export function useConversationChatState({
     setMessages,
     status,
   ])
-
+  useAgentActivityPoller({
+    apiBasePath,
+    conversationId,
+    chatStatus: pollForActivity ? status : 'disabled',
+    resumeStream,
+  })
   return chat
 }
