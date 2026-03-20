@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +17,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import UIMessage
+from redis import asyncio as redis
 
 from .chat_schemas import (
     ChatMessagesResponse,
@@ -36,10 +38,10 @@ from .db.service import (
     get_active_run,
     get_latest_snapshot,
     get_latest_snapshot_per_conversation,
-    supersede_stale_runs,
     update_run_task_id,
 )
 from .lifespan import get_db_runtime
+from .mailbox import push_to_mailbox
 from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
 from .tasks.run_agent_task import run_agent_task
@@ -55,6 +57,21 @@ def _require_redis_url(settings: AppSettings) -> str:
     if not isinstance(redis_url, str) or not redis_url:
         raise HTTPException(status_code=503, detail='Redis runtime unavailable')
     return redis_url
+
+
+def _extract_last_user_text(messages: Sequence[UIMessage]) -> str | None:
+    """Extract the text content of the last user message, if any."""
+    for msg in reversed(messages):
+        if msg.role != 'user':
+            continue
+        texts: list[str] = []
+        for part in msg.parts:
+            text = getattr(part, 'text', None)
+            if isinstance(text, str):
+                texts.append(text)
+        if texts:
+            return '\n'.join(texts)
+    return None
 
 
 def _validate_chat_request(
@@ -292,7 +309,7 @@ def create_chat_router(
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
         db_runtime: DatabaseRuntime = Depends(get_db_runtime),
-    ) -> StreamingResponse:
+    ) -> Response:
         raw_body = _normalize_tool_part_states(await request.body())
         extra_data = _validate_chat_request(
             raw_body=raw_body,
@@ -301,11 +318,31 @@ def create_chat_router(
         )
         redis_url = _require_redis_url(settings)
 
-        # POST always means a new user message — supersede any stale active runs
-        # so they don't block the new enqueue.
-        with db_runtime.session() as session:
-            supersede_stale_runs(session, conversation_id, agent_key)
+        # Extract user message text for the mailbox.
+        run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
+        user_text = _extract_last_user_text(run_input.messages)
 
+        # Check if the agent already has an active run.
+        with db_runtime.session() as session:
+            active_run = get_active_run(session, conversation_id, agent_key)
+
+        if active_run is not None:
+            # Agent is active — push to mailbox, return 202.
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+            try:
+                if user_text:
+                    await push_to_mailbox(
+                        redis_client,
+                        agent_key=agent_key,
+                        conversation_id=conversation_id,
+                        sender='user',
+                        content=user_text,
+                    )
+            finally:
+                await redis_client.aclose()
+            return Response(status_code=202)
+
+        # Agent is idle — enqueue a new run.
         run_id = str(uuid4())
         with db_runtime.session() as session:
             create_chat_run(session, run_id, conversation_id, agent_key)

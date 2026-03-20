@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import uuid4
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AgentRunResult
@@ -13,19 +14,33 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
 from pydantic_ai.ui.vercel_ai.response_types import DoneChunk, ErrorChunk
 from redis import asyncio as redis
 
+from ..agent_deps import AgentDeps
 from ..db import ChatRunStatus, to_json_value
+from ..db.message_codec import messages_from_json
 from ..db.runtime import DatabaseRuntime
-from ..db.service import save_run_snapshot, update_run_status
+from ..db.service import (
+    create_chat_run,
+    get_active_run,
+    get_latest_snapshot,
+    save_run_snapshot,
+    update_run_status,
+)
+from ..history_processor import (
+    create_mailbox_history_processor,
+    mailbox_messages_to_model_requests,
+)
+from ..mailbox import drain_mailbox
 from ..settings import get_settings
 from ..streaming.redis_stream import (
     chat_run_stream_key,
     publish_chunk,
     publish_terminal,
 )
-from .agent_registry import get_agent, resolve_model_ref
+from .agent_registry import get_agent, get_team_agents, resolve_model_ref
 from .broker import broker
 
 logging.basicConfig(level=logging.INFO)
@@ -106,12 +121,13 @@ async def run_agent_task(
     run_id: str,
     conversation_id: str,
     agent_key: str,
-    request_body: str,
+    request_body: str | None,
     selected_model: str | None,
     system_prompt: str | None,
 ) -> None:
     db_runtime = _get_worker_db_runtime()
-    redis_url = get_settings().redis_url
+    settings = get_settings()
+    redis_url = settings.redis_url
     stream_key = chat_run_stream_key(
         agent_key=agent_key,
         conversation_id=conversation_id,
@@ -123,23 +139,61 @@ async def run_agent_task(
         await _update_run_status(run_id, ChatRunStatus.RUNNING)
 
         agent = get_agent(agent_key)
-        run_input = VercelAIAdapter[Any, Any].build_run_input(
-            request_body.encode('utf-8')
+        team_agents = get_team_agents()
+
+        # Install mailbox history processor for the duration of this run.
+        history_processor = create_mailbox_history_processor(
+            redis_client,
+            agent_key,
+            conversation_id,
         )
-        adapter = VercelAIAdapter[Any, Any](
-            agent=agent,
-            run_input=run_input,
-            accept='text/event-stream',
-            sdk_version=6,
+        agent.history_processors = [history_processor]
+
+        deps = AgentDeps(
+            conversation_id=conversation_id,
+            agent_key=agent_key,
+            team_agents=team_agents,
+            redis_client=redis_client,
         )
-        deferred_tool_results = _filter_deferred_tool_results(
-            adapter.messages,
-            adapter.deferred_tool_results,
-        )
-        # `UIAdapter.run_stream_native` falls back to `self.deferred_tool_results`
-        # whenever the explicit argument is `None`. Override the cached property
-        # value so stale approvals from the request payload are not reintroduced.
-        adapter.__dict__['deferred_tool_results'] = deferred_tool_results
+
+        if request_body is not None:
+            # User-initiated run — parse Vercel AI SDK request body.
+            run_input = VercelAIAdapter[Any, Any].build_run_input(
+                request_body.encode('utf-8')
+            )
+            adapter = VercelAIAdapter[Any, Any](
+                agent=agent,
+                run_input=run_input,
+                accept='text/event-stream',
+                sdk_version=6,
+            )
+            deferred_tool_results = _filter_deferred_tool_results(
+                adapter.messages,
+                adapter.deferred_tool_results,
+            )
+            adapter.__dict__['deferred_tool_results'] = deferred_tool_results
+            message_history: list[ModelMessage] | None = None
+        else:
+            # Mailbox-initiated (wake-up) run — load persisted history
+            # and drain the mailbox to seed the conversation.
+            adapter = VercelAIAdapter[Any, Any](
+                agent=agent,
+                run_input=SubmitMessage(id=conversation_id, messages=[]),
+                accept='text/event-stream',
+                sdk_version=6,
+            )
+            deferred_tool_results = None
+
+            with db_runtime.session() as session:
+                snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+
+            persisted_history = (
+                messages_from_json(snapshot.model_messages_json) if snapshot else []
+            )
+            mailbox_msgs = await drain_mailbox(redis_client, agent_key, conversation_id)
+            injected = mailbox_messages_to_model_requests(mailbox_msgs)
+            message_history = [*persisted_history, *injected]
+
         model_ref = resolve_model_ref(agent_key, selected_model)
 
         async def on_complete(result: AgentRunResult[Any]) -> None:
@@ -159,12 +213,20 @@ async def run_agent_task(
             model=model_ref,
             instructions=system_prompt,
             on_complete=on_complete,
+            deps=deps,
+            message_history=message_history,
         ):
             await publish_chunk(
                 redis_client, stream_key, event_stream.encode_event(chunk)
             )
 
         await _update_run_status(run_id, ChatRunStatus.COMPLETED)
+
+        # Post-run mailbox check: if new messages arrived during the final
+        # model invocation, kick off a follow-up run for ourselves.
+        remaining = await drain_mailbox(redis_client, agent_key, conversation_id)
+        if remaining:
+            await _enqueue_self_wakeup(agent_key, conversation_id)
     except Exception as exc:
         logger.exception('Taskiq worker failed to execute run %s', run_id)
         await _update_run_status(run_id, ChatRunStatus.FAILED, str(exc))
@@ -179,5 +241,37 @@ async def run_agent_task(
             f'data: {DoneChunk().encode(5)}\n\n',
         )
     finally:
+        agent.history_processors = []
         await publish_terminal(redis_client, stream_key)
         await redis_client.aclose()
+
+
+async def _enqueue_self_wakeup(agent_key: str, conversation_id: str) -> None:
+    """Enqueue a mailbox-initiated run for the given agent."""
+    db_runtime = _get_worker_db_runtime()
+    run_id = str(uuid4())
+    with db_runtime.session() as session:
+        create_chat_run(session, run_id, conversation_id, agent_key)
+
+    await run_agent_task.kiq(
+        run_id=run_id,
+        conversation_id=conversation_id,
+        agent_key=agent_key,
+        request_body=None,
+        selected_model=None,
+        system_prompt=None,
+    )
+
+
+async def enqueue_wakeup_run(agent_key: str, conversation_id: str) -> None:
+    """Wake up an idle agent if it has no active run.
+
+    Called from the ``tell`` tool. If the agent already has an active run
+    the mailbox will be drained by its history_processor; no wake-up needed.
+    """
+    db_runtime = _get_worker_db_runtime()
+    with db_runtime.session() as session:
+        active = get_active_run(session, conversation_id, agent_key)
+    if active is not None:
+        return
+    await _enqueue_self_wakeup(agent_key, conversation_id)

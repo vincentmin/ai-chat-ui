@@ -10,6 +10,8 @@ import pydantic_ai
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
+from chatbot.agent_deps import AgentDeps
+
 CHINOOK_DB_PATH = Path(__file__).with_name('chinook.db')
 
 
@@ -35,8 +37,16 @@ agent = pydantic_ai.Agent(
     instructions=(
         'You are an expert SQL assistant using the Chinook sample database. '
         'Use the query tool for analysis and the display tool when the user asks '
-        'to show tabular results in the UI.'
+        'to show tabular results in the UI.\n\n'
+        'You are part of a team of agents. Your teammates are:\n'
+        '- arxiv: An expert research assistant with access to Arxiv papers.\n\n'
+        'Use the tell tool to send messages to other agents '
+        'when collaboration is needed. '
+        'The tell tool is fire-and-forget — it does not wait for a response. '
+        'If you have no more work to do while waiting for another agent, '
+        'just finish with a message explaining you are waiting.'
     ),
+    deps_type=AgentDeps,
 )
 
 

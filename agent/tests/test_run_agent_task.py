@@ -29,6 +29,11 @@ class _FakeRedisClient:
         self.closed = True
 
 
+def _fake_agent() -> SimpleNamespace:
+    """Return a fake agent that supports attribute assignment."""
+    return SimpleNamespace(history_processors=[])
+
+
 def test_filter_deferred_tool_results_matches_last_model_response_calls() -> None:
     messages = [
         ModelResponse(
@@ -155,7 +160,14 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
         'from_url',
         lambda *_args, **_kwargs: fake_redis_client,
     )
-    monkeypatch.setattr(run_agent_task_module, 'get_agent', lambda _agent_key: object())
+    monkeypatch.setattr(
+        run_agent_task_module, 'get_agent', lambda _agent_key: _fake_agent()
+    )
+    monkeypatch.setattr(
+        run_agent_task_module,
+        'get_team_agents',
+        lambda: ['sql', 'arxiv'],
+    )
     monkeypatch.setattr(
         run_agent_task_module,
         'resolve_model_ref',
@@ -224,6 +236,8 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
             model,
             instructions,
             on_complete,
+            deps=None,
+            message_history=None,
         ):
             captured_run_stream_args['model'] = model
             captured_run_stream_args['instructions'] = instructions
@@ -234,6 +248,11 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
             yield 'chunk-2'
 
     monkeypatch.setattr(run_agent_task_module, 'VercelAIAdapter', FakeAdapter)
+
+    async def fake_drain_mailbox(_client, _agent_key, _conv_id):
+        return []
+
+    monkeypatch.setattr(run_agent_task_module, 'drain_mailbox', fake_drain_mailbox)
 
     await run_agent_task_module.run_agent_task.original_func(
         run_id='run-1',
@@ -291,7 +310,14 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
         'from_url',
         lambda *_args, **_kwargs: fake_redis_client,
     )
-    monkeypatch.setattr(run_agent_task_module, 'get_agent', lambda _agent_key: object())
+    monkeypatch.setattr(
+        run_agent_task_module, 'get_agent', lambda _agent_key: _fake_agent()
+    )
+    monkeypatch.setattr(
+        run_agent_task_module,
+        'get_team_agents',
+        lambda: ['sql', 'arxiv'],
+    )
     monkeypatch.setattr(
         run_agent_task_module,
         'resolve_model_ref',
@@ -349,16 +375,25 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
             model,
             instructions,
             on_complete,
+            deps=None,
+            message_history=None,
         ):
             del model
             del instructions
             del on_complete
             del output_type
             del deferred_tool_results
+            del deps
+            del message_history
             raise RuntimeError('boom')
             yield 'unreachable'
 
     monkeypatch.setattr(run_agent_task_module, 'VercelAIAdapter', FailingAdapter)
+
+    async def fake_drain_mailbox(_client, _agent_key, _conv_id):
+        return []
+
+    monkeypatch.setattr(run_agent_task_module, 'drain_mailbox', fake_drain_mailbox)
 
     await run_agent_task_module.run_agent_task.original_func(
         run_id='run-2',
