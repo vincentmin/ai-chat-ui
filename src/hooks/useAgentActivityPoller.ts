@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 
+import { getRunStatus } from '@/lib/api'
+
 const POLL_INTERVAL_MS = 4000
 
 interface UseAgentActivityPollerOptions {
@@ -10,9 +12,9 @@ interface UseAgentActivityPollerOptions {
 }
 
 /**
- * Polls the agent's stream endpoint while the chat is idle.
- * When a non-204 response is detected (meaning a run is active),
- * triggers `resumeStream()` to attach the column to the new stream.
+ * Polls the lightweight run-status endpoint while the chat is idle.
+ * When an active run is detected, triggers `resumeStream()` to attach
+ * the client to the in-progress SSE stream.
  */
 export function useAgentActivityPoller({
   apiBasePath,
@@ -34,16 +36,12 @@ export function useAgentActivityPoller({
       pollingRef.current = true
 
       try {
-        const res = await fetch(`${apiBasePath}/chat/${conversationId}/stream`, {
-          signal: abortController.signal,
-        })
+        const runStatus = await getRunStatus(apiBasePath, conversationId)
         // Signal may have been aborted while the fetch was in-flight.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (abortController.signal.aborted) return
 
-        if (res.status !== 204) {
-          // A run is active — attach to it. Consume the body to avoid leaking.
-          await res.body?.cancel()
+        if (runStatus.active) {
           await resumeStream()
         }
       } catch {

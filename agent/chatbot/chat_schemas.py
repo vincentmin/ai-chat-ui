@@ -80,3 +80,13 @@ class TeamConfigureResponse(
     populate_by_name=True,
 ):
     agents: list[TeamAgentInfo]
+
+
+class RunStatusResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    active: bool
+    run_id: str | None = None
+    status: str | None = None

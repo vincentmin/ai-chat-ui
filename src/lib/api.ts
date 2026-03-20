@@ -1,4 +1,4 @@
-import type { ChatHistoryResponse, ConversationsResponse, RemoteConfig, TeamConfig } from '@/types'
+import type { ChatHistoryResponse, ConversationsResponse, RemoteConfig, RunStatus, TeamConfig } from '@/types'
 
 export async function getConfig(apiBasePath: string): Promise<RemoteConfig> {
   const res = await fetch(`${apiBasePath}/configure`)
@@ -6,6 +6,14 @@ export async function getConfig(apiBasePath: string): Promise<RemoteConfig> {
     throw new Error('Failed to load configuration')
   }
   return (await res.json()) as RemoteConfig
+}
+
+export async function getRunStatus(apiBasePath: string, conversationId: string): Promise<RunStatus> {
+  const res = await fetch(`${apiBasePath}/chat/${conversationId}/run`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch run status')
+  }
+  return (await res.json()) as RunStatus
 }
 
 export async function getConversationMessages(

@@ -34,3 +34,9 @@ export interface TeamAgentInfo {
 export interface TeamConfig {
   agents: TeamAgentInfo[]
 }
+
+export interface RunStatus {
+  active: boolean
+  runId?: string
+  status?: string
+}
