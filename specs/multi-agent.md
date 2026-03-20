@@ -158,9 +158,9 @@ The current `run_agent_task` needs the following changes:
 1. **Accept `deps`**: Pass `AgentDeps` to the agent run so tools can access `conversation_id`, `agent_key`, and `team_agents`.
 2. **Attach `history_processor`**: Create and attach the mailbox history processor before starting the agent stream.
 3. **Post-run mailbox check**: After the stream completes, drain the mailbox. If non-empty, enqueue a follow-up run.
-4. **Two run paths**: The task supports two entry modes:
-   - **User-initiated run**: Triggered by `POST /chat/{conversation_id}`. The request body is a Vercel AI SDK payload processed through `VercelAIAdapter` as today.
-   - **Mailbox-initiated run (wake-up)**: Triggered when an idle agent receives a mailbox message. No user request body exists. The task loads the latest `AgentRunSnapshot` from the DB (already in Pydantic AI `ModelMessage` format), drains the mailbox, appends mailbox messages as `ModelRequest` parts, and calls `agent.run_stream()` directly — **bypassing `VercelAIAdapter`** entirely. The streaming output is still published to Redis as SSE-encoded chunks so the existing frontend consumption path works unchanged.
+4. **Two run paths** — both use `VercelAIAdapter` for SSE output encoding:
+   - **User-initiated run**: Triggered by `POST /chat/{conversation_id}`. The request body is a Vercel AI SDK payload. The adapter is constructed via `VercelAIAdapter.build_run_input(request_body)` as today.
+   - **Mailbox-initiated run (wake-up)**: Triggered when an idle agent receives a mailbox message. No user request body exists. The adapter is constructed with an **empty `SubmitMessage`**: `SubmitMessage(id=conversation_id, messages=[])`. The real conversation history (from `AgentRunSnapshot.model_messages_json`, already in Pydantic AI `ModelMessage` format) plus drained mailbox messages (converted to `ModelRequest` parts) are passed via the `message_history` parameter to `adapter.run_stream()`. Since `self.messages` resolves to `[]` from the empty `SubmitMessage`, the merge in `run_stream_native` (`[*(message_history or []), *self.messages]`) produces exactly the provided history. The `build_event_stream()` / `encode_event()` pipeline produces identical SSE output regardless of how the adapter was constructed.
 5. **Remove supersede logic**: The `supersede_stale_runs` call is removed. All incoming messages (user or agent) go through the mailbox. If the agent is idle, a new run is started. If active, the mailbox is drained by the `history_processor`.
 
 ### 7. Database Changes
@@ -303,9 +303,9 @@ The existing `Chat` component is reused as-is. `AgentColumn` is a thin wrapper t
 2. **Implement mailbox** in Redis (push, drain, check-empty operations). Drain uses a Redis pipeline (LRANGE + DEL).
 3. **Implement `tell` tool** as a shared tool registered on all team agents. Writes directly to Redis mailbox, enqueues wake-up task if target is idle.
 4. **Add `history_processor`** that drains mailbox before each model invocation.
-5. **Modify `run_agent_task`** to support two entry modes:
-   - **User-initiated**: Vercel AI SDK request body through `VercelAIAdapter` (existing path).
-   - **Mailbox-initiated (wake-up)**: Load persisted `ModelMessage` history from DB, drain mailbox, call `agent.run_stream()` directly (bypass adapter).
+5. **Modify `run_agent_task`** to support two entry modes (both use `VercelAIAdapter`):
+   - **User-initiated**: Construct adapter via `build_run_input(request_body)` (existing path).
+   - **Mailbox-initiated (wake-up)**: Construct adapter with `SubmitMessage(id=conversation_id, messages=[])`. Load persisted `ModelMessage` history from DB, drain mailbox, pass as `message_history` to `adapter.run_stream()`.
    - Both paths: attach `history_processor`, check mailbox after run completes, re-enqueue if non-empty.
 6. **Replace supersede logic** with mailbox-only routing in `POST /chat/{conversation_id}`. If agent is active, push to mailbox and return 202. If idle, push to mailbox, enqueue run, return streaming response.
 7. **Update system prompts** to inform agents about team members and the `tell` tool.
@@ -330,11 +330,11 @@ The existing `Chat` component is reused as-is. `AgentColumn` is a thin wrapper t
 
 ## Risks and Concerns
 
-### 1. Wake-Up Runs Bypass `VercelAIAdapter`
+### 1. Wake-Up Runs and `VercelAIAdapter`
 
-Mailbox-initiated runs (wake-ups) bypass `VercelAIAdapter` entirely. The persisted history is already in Pydantic AI `ModelMessage` format (from `AgentRunSnapshot.model_messages_json`), and mailbox messages are trivially converted to `ModelRequest` parts. The task calls `agent.run_stream()` directly with this history.
+**Resolved.** Both user-initiated and mailbox-initiated runs use `VercelAIAdapter` for SSE output encoding. The wake-up path constructs the adapter with `SubmitMessage(id=conversation_id, messages=[])` and passes the real `ModelMessage` history via `message_history`. The adapter's `run_stream_native` merges `message_history` with `self.messages` (which is `[]`), so the agent receives exactly the provided history. The `build_event_stream()` / `encode_event()` pipeline is reused as-is — no separate encoding path is needed.
 
-The streaming output must still be published to Redis as SSE-encoded chunks so the frontend can consume it through the existing `GET /stream` path. This means the wake-up path needs its own chunk encoding that produces the same SSE format as `VercelAIAdapter`'s event stream. Pydantic AI's `VercelAIAdapter` exposes `build_event_stream()` and `encode_event()` — these can potentially be used standalone without a full adapter instance, or we can replicate the minimal SSE encoding. This is an implementation detail to resolve during development.
+The only difference between the two paths is how the adapter is constructed, not how it streams output.
 
 ### 2. Message Ordering and Duplication
 
@@ -387,4 +387,4 @@ The frontend must detect which case applies. If the agent is active, the POST re
 
 4. **Conversation deletion in team mode**: Deleting a team conversation should delete all agents' snapshots for that `conversationId`. This requires a cross-agent delete operation (loop over all agent keys or add a DELETE endpoint that ignores `agent_key`).
 
-5. **SSE encoding for wake-up runs**: Wake-up runs bypass `VercelAIAdapter` and call `agent.run_stream()` directly. We need to produce the same SSE chunk format that the frontend expects. Determine whether `VercelAIAdapter.build_event_stream()` / `encode_event()` can be used standalone, or if we need a minimal encoding utility.
+5. **~~SSE encoding for wake-up runs~~**: Resolved. Wake-up runs use `VercelAIAdapter` with an empty `SubmitMessage` and pass history via `message_history`. The same `build_event_stream()` / `encode_event()` pipeline handles SSE encoding for both paths.
