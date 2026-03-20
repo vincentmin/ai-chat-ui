@@ -41,11 +41,10 @@ from ..streaming.redis_stream import (
     publish_chunk,
     publish_terminal,
 )
-from ..team_tools import tell
+from ..team_tools import get_team_instructions, tell
 from .agent_registry import (
     get_agent,
     get_team_agents,
-    get_team_instructions,
     resolve_model_ref,
 )
 from .broker import broker

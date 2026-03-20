@@ -15,41 +15,6 @@ ModelsParam = Mapping[str, Model | KnownModelName | str]
 # All known agent keys. Order is stable and used for team_agents lists.
 AGENT_KEYS: list[str] = ['sql', 'arxiv']
 
-_AGENT_DESCRIPTIONS: dict[str, str] = {
-    'sql': 'An expert SQL assistant using the Chinook sample database.',
-    'arxiv': 'An expert research assistant with access to Arxiv papers.',
-}
-
-_TEAM_COLLAB_TEMPLATE = (
-    '## Team collaboration\n'
-    'You are part of a team of agents. Your teammates are:\n'
-    '{teammates}\n\n'
-    'Messages from other agents appear as user messages prefixed with '
-    '"[Message from <agent>]: ". When another agent asks you to do '
-    'something or requests a reply, you MUST use the `tell` tool to '
-    'send your response back — simply writing text in your reply does '
-    'NOT deliver it to the other agent.\n\n'
-    'The `tell` tool is asynchronous: it delivers your message and '
-    'returns immediately. You do not need to wait for a reply. '
-    'If the other agent responds later, you will be automatically '
-    'woken up with their reply as a new "[Message from ...]" message. '
-    'So after calling `tell`, finish your current turn normally — '
-    'you can continue doing other work if there is any, or end with '
-    'a brief status message to the user. '
-    'The end user has visibility into all your messages, '
-    'so you can inform them using your regular messages.'
-)
-
-
-def get_team_instructions(agent_key: str) -> str:
-    """Build the team-collaboration instruction block for the given agent."""
-    teammates = '\n'.join(
-        f'- {key}: {desc}'
-        for key, desc in _AGENT_DESCRIPTIONS.items()
-        if key != agent_key
-    )
-    return _TEAM_COLLAB_TEMPLATE.format(teammates=teammates)
-
 
 def get_agent(
     agent_key: str,
