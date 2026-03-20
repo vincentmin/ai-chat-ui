@@ -29,6 +29,7 @@ from .chat_schemas import (
     DeleteChatResponse,
     HealthResponse,
     ModelInfo,
+    RunStatusResponse,
 )
 from .db.message_codec import messages_from_json
 from .db.runtime import DatabaseRuntime
@@ -393,6 +394,27 @@ def create_chat_router(
             run_id=active_run.run_id,
         )
         return _streaming_response(redis_url, stream_key, start_id='0-0')
+
+    @router.get('/chat/{conversation_id}/run')
+    async def get_run_status(
+        conversation_id: str,
+        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+    ) -> RunStatusResponse:
+        with db_runtime.session() as session:
+            active_run = get_active_run(session, conversation_id, agent_key)
+            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+
+        if active_run is None or active_run.run_id is None:
+            return RunStatusResponse(active=False)
+
+        if latest_snapshot is not None and latest_snapshot.run_id == active_run.run_id:
+            return RunStatusResponse(active=False)
+
+        return RunStatusResponse(
+            active=True,
+            run_id=active_run.run_id,
+            status=active_run.status,
+        )
 
     @router.get('/chat/{conversation_id}')
     async def get_chat(
