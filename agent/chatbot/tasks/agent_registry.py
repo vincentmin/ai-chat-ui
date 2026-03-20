@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName, Model, infer_model
 
 from .. import arxiv_agent as arxiv_agent_module
+from .. import sql_agent as sql_agent_module
 from ..settings import get_settings
-from ..sql_agent import agent as sql_agent
 from ..team_tools import tell
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
@@ -16,25 +16,20 @@ ModelsParam = Mapping[str, Model | KnownModelName | str]
 # All known agent keys. Order is stable and used for team_agents lists.
 AGENT_KEYS: list[str] = ['sql', 'arxiv']
 
-# Track which agents have been initialized with team tools.
-_team_tools_registered: set[str] = set()
 
-
-def _ensure_team_tools(agent: Agent[Any, Any], agent_key: str) -> None:
-    """Register the ``tell`` tool on an agent exactly once."""
-    if agent_key in _team_tools_registered:
-        return
-    agent.tool(tell)
-    _team_tools_registered.add(agent_key)
-
-
-def get_agent(agent_key: str) -> Agent[Any, Any]:
+def get_agent(
+    agent_key: str,
+    history_processors: Sequence[Any] | None = None,
+) -> Agent[Any, Any]:
+    """Create a fresh agent with optional per-run history processors."""
     if agent_key == 'sql':
-        _ensure_team_tools(sql_agent, 'sql')
-        return sql_agent
+        agent = sql_agent_module.make_agent(history_processors=history_processors)
+        agent.tool(tell)
+        return agent
     if agent_key == 'arxiv':
-        _ensure_team_tools(arxiv_agent_module.agent, 'arxiv')
-        return arxiv_agent_module.agent
+        agent = arxiv_agent_module.make_agent(history_processors=history_processors)
+        agent.tool(tell)
+        return agent
     raise ValueError(f'Unsupported agent key: {agent_key}')
 
 
@@ -75,6 +70,13 @@ def resolve_model_ref(agent_key: str, model_id: str | None) -> Model | str | Non
         return None
 
     settings = get_settings()
-    agent = get_agent(agent_key)
-    model_lookup = build_model_lookup(agent, settings.available_models())
+    # Use the module-level singleton agents for model lookup — they share the same
+    # model configuration as factory-created agents but avoid unnecessary allocation.
+    if agent_key == 'sql':
+        lookup_agent = sql_agent_module.agent
+    elif agent_key == 'arxiv':
+        lookup_agent = arxiv_agent_module.agent
+    else:
+        raise ValueError(f'Unsupported agent key: {agent_key}')
+    model_lookup = build_model_lookup(lookup_agent, settings.available_models())
     return model_lookup.get(model_id)

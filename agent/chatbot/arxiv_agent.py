@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -13,6 +15,30 @@ ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 ARXIV_ABS_BASE_URL = 'https://arxiv.org/abs/'
 ARXIV_PDF_BASE_URL = 'https://arxiv.org/pdf/'
 ATOM_NS = {'atom': 'http://www.w3.org/2005/Atom'}
+
+_INSTRUCTIONS = (
+    'You are an expert research assistant with access to Arxiv. '
+    'Use search to find papers, fetch to read paper PDFs, and display_paper '
+    'to show or preview a paper to the user in the UI. Be proactive in suggesting '
+    'to display papers that might be relevant to the user.\n\n'
+    '## Team collaboration\n'
+    'You are part of a team of agents. Your teammates are:\n'
+    '- sql: An expert SQL assistant using the Chinook sample database.\n\n'
+    'Messages from other agents appear as user messages prefixed with '
+    '"[Message from <agent>]: ". When another agent asks you to do '
+    'something or requests a reply, you MUST use the `tell` tool to '
+    'send your response back — simply writing text in your reply does '
+    'NOT deliver it to the other agent.\n\n'
+    'The `tell` tool is asynchronous: it delivers your message and '
+    'returns immediately. You do not need to wait for a reply. '
+    'If the other agent responds later, you will be automatically '
+    'woken up with their reply as a new "[Message from ...]" message. '
+    'So after calling `tell`, finish your current turn normally — '
+    'you can continue doing other work if there is any, or end with '
+    'a brief status message to the user.'
+    'The end user has visibility into all your messages, '
+    'so you can inform them using your regular messages.'
+)
 
 
 def normalize_arxiv_id(arxiv_id: str) -> str:
@@ -40,127 +66,114 @@ def _proxy_pdf_url(arxiv_id: str) -> str:
     return f'/api/v1/arxiv/paper/{encoded_id}/pdf'
 
 
-agent = pydantic_ai.Agent(
-    model='openai-responses:gpt-5-mini',
-    instructions=(
-        'You are an expert research assistant with access to Arxiv. '
-        'Use search to find papers, fetch to read paper PDFs, and display_paper '
-        'to show or preview a paper to the user in the UI. Be proactive in suggesting '
-        'to display papers that might be relevant to the user.\n\n'
-        '## Team collaboration\n'
-        'You are part of a team of agents. Your teammates are:\n'
-        '- sql: An expert SQL assistant using the Chinook sample database.\n\n'
-        'Messages from other agents appear as user messages prefixed with '
-        '"[Message from <agent>]: ". When another agent asks you to do '
-        'something or requests a reply, you MUST use the `tell` tool to '
-        'send your response back — simply writing text in your reply does '
-        'NOT deliver it to the other agent.\n\n'
-        'The `tell` tool is asynchronous: it delivers your message and '
-        'returns immediately. You do not need to wait for a reply. '
-        'If the other agent responds later, you will be automatically '
-        'woken up with their reply as a new "[Message from ...]" message. '
-        'So after calling `tell`, finish your current turn normally — '
-        'you can continue doing other work if there is any, or end with '
-        'a brief status message to the user.'
-        'The end user has visibility into all your messages, '
-        'so you can inform them using your regular messages.'
-    ),
-    deps_type=AgentDeps,
-)
-
-
-@agent.tool_plain
-async def search(query: str) -> list[dict[str, str]]:
-    """Search Arxiv and return paper metadata including abstracts."""
-    max_results = 5
-    params = urlencode(
-        {
-            'search_query': f'all:{query}',
-            'start': 0,
-            'max_results': max_results,
-            'sortBy': 'relevance',
-            'sortOrder': 'descending',
-        }
+def make_agent(
+    history_processors: Sequence[Any] | None = None,
+) -> pydantic_ai.Agent[AgentDeps, Any]:
+    """Create a new arxiv agent instance, optionally with per-run history processors."""
+    new_agent: pydantic_ai.Agent[AgentDeps, Any] = pydantic_ai.Agent(
+        model='openai-responses:gpt-5-mini',
+        instructions=_INSTRUCTIONS,
+        deps_type=AgentDeps,
+        history_processors=list(history_processors) if history_processors else [],
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            response = await client.get(f'{ARXIV_API_URL}?{params}')
-            response.raise_for_status()
-            payload = response.content
-    except Exception as e:
-        raise pydantic_ai.ModelRetry(f'Failed to search Arxiv: {e}') from e
-
-    root = ET.fromstring(payload)
-    results: list[dict[str, str]] = []
-
-    for entry in root.findall('atom:entry', namespaces=ATOM_NS):
-        raw_id = entry.findtext('atom:id', default='', namespaces=ATOM_NS).strip()
-        title = entry.findtext('atom:title', default='', namespaces=ATOM_NS).strip()
-        abstract = entry.findtext(
-            'atom:summary', default='', namespaces=ATOM_NS
-        ).strip()
-        published = entry.findtext(
-            'atom:published', default='', namespaces=ATOM_NS
-        ).strip()
-
-        arxiv_id = raw_id.rsplit('/', maxsplit=1)[-1] if raw_id else ''
-        _pdf_url = pdf_url(arxiv_id) if arxiv_id else ''
-
-        results.append(
+    @new_agent.tool_plain
+    async def search(query: str) -> list[dict[str, str]]:
+        """Search Arxiv and return paper metadata including abstracts."""
+        max_results = 5
+        params = urlencode(
             {
-                'id': arxiv_id,
-                'title': ' '.join(title.split()),
-                'abstract': ' '.join(abstract.split()),
-                'published': published,
-                'url': raw_id or _abs_url(arxiv_id),
-                'pdf_url': _pdf_url,
+                'search_query': f'all:{query}',
+                'start': 0,
+                'max_results': max_results,
+                'sortBy': 'relevance',
+                'sortOrder': 'descending',
             }
         )
 
-    return results
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                response = await client.get(f'{ARXIV_API_URL}?{params}')
+                response.raise_for_status()
+                payload = response.content
+        except Exception as e:
+            raise pydantic_ai.ModelRetry(f'Failed to search Arxiv: {e}') from e
 
+        root = ET.fromstring(payload)
+        results: list[dict[str, str]] = []
 
-@agent.tool_plain
-def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
-    """Use this tool to read the full pdf for an arxiv paper."""
-    normalized_id = normalize_arxiv_id(arxiv_id)
-    if not normalized_id:
-        raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
+        for entry in root.findall('atom:entry', namespaces=ATOM_NS):
+            raw_id = entry.findtext('atom:id', default='', namespaces=ATOM_NS).strip()
+            title = entry.findtext('atom:title', default='', namespaces=ATOM_NS).strip()
+            abstract = entry.findtext(
+                'atom:summary', default='', namespaces=ATOM_NS
+            ).strip()
+            published = entry.findtext(
+                'atom:published', default='', namespaces=ATOM_NS
+            ).strip()
 
-    return pydantic_ai.ToolReturn(
-        return_value=f'Loaded PDF for Arxiv paper {normalized_id}',
-        content=[
-            pydantic_ai.DocumentUrl(
-                url=pdf_url(normalized_id),
-                media_type='application/pdf',
+            arxiv_id = raw_id.rsplit('/', maxsplit=1)[-1] if raw_id else ''
+            _pdf_url = pdf_url(arxiv_id) if arxiv_id else ''
+
+            results.append(
+                {
+                    'id': arxiv_id,
+                    'title': ' '.join(title.split()),
+                    'abstract': ' '.join(abstract.split()),
+                    'published': published,
+                    'url': raw_id or _abs_url(arxiv_id),
+                    'pdf_url': _pdf_url,
+                }
             )
-        ],
-    )
+
+        return results
+
+    @new_agent.tool_plain
+    def fetch(arxiv_id: str) -> pydantic_ai.ToolReturn:
+        """Use this tool to read the full pdf for an arxiv paper."""
+        normalized_id = normalize_arxiv_id(arxiv_id)
+        if not normalized_id:
+            raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
+
+        return pydantic_ai.ToolReturn(
+            return_value=f'Loaded PDF for Arxiv paper {normalized_id}',
+            content=[
+                pydantic_ai.DocumentUrl(
+                    url=pdf_url(normalized_id),
+                    media_type='application/pdf',
+                )
+            ],
+        )
+
+    @new_agent.tool_plain
+    def display_paper(arxiv_id: str) -> pydantic_ai.ToolReturn:
+        """Send a paper preview payload to the user.
+        The frontend renders a PDF iframe panel."""
+        resolved_id = normalize_arxiv_id(arxiv_id)
+        if not resolved_id:
+            raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
+
+        return pydantic_ai.ToolReturn(
+            return_value=f'Paper preview displayed for {resolved_id}',
+            metadata=[
+                DataChunk(
+                    type='data-arxiv-paper',
+                    data={
+                        'arxiv_id': resolved_id,
+                        'title': f'Arxiv Paper {resolved_id}',
+                        'url': _abs_url(resolved_id),
+                        'pdf_url': _proxy_pdf_url(resolved_id),
+                    },
+                ),
+            ],
+        )
+
+    return new_agent
 
 
-@agent.tool_plain
-def display_paper(arxiv_id: str) -> pydantic_ai.ToolReturn:
-    """Send a paper preview payload to the user.
-    The frontend renders a PDF iframe panel."""
-    resolved_id = normalize_arxiv_id(arxiv_id)
-    if not resolved_id:
-        raise pydantic_ai.ModelRetry(f'Invalid Arxiv ID: {arxiv_id}')
-
-    return pydantic_ai.ToolReturn(
-        return_value=f'Paper preview displayed for {resolved_id}',
-        metadata=[
-            DataChunk(
-                type='data-arxiv-paper',
-                data={
-                    'arxiv_id': resolved_id,
-                    'title': f'Arxiv Paper {resolved_id}',
-                    'url': _abs_url(resolved_id),
-                    'pdf_url': _proxy_pdf_url(resolved_id),
-                },
-            ),
-        ],
-    )
+# Module-level singleton used for CLI and model/tool introspection only.
+# Do not use this instance for actual agent runs — use make_agent() instead.
+agent = make_agent()
 
 
 if __name__ == '__main__':

@@ -138,16 +138,14 @@ async def run_agent_task(
     try:
         await _update_run_status(run_id, ChatRunStatus.RUNNING)
 
-        agent = get_agent(agent_key)
-        team_agents = get_team_agents()
-
-        # Install mailbox history processor for the duration of this run.
+        # Build per-run history processor and create a fresh agent with it baked in.
         history_processor = create_mailbox_history_processor(
             redis_client,
             agent_key,
             conversation_id,
         )
-        agent.history_processors = [history_processor]
+        agent = get_agent(agent_key, history_processors=[history_processor])
+        team_agents = get_team_agents()
 
         deps = AgentDeps(
             conversation_id=conversation_id,
@@ -257,7 +255,6 @@ async def run_agent_task(
             f'data: {DoneChunk().encode(5)}\n\n',
         )
     finally:
-        agent.history_processors = []
         await publish_terminal(redis_client, stream_key)
         await redis_client.aclose()
 
