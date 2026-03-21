@@ -42,6 +42,7 @@ agent = pydantic_ai.Agent(
     ),
     deps_type=AgentDeps,
     history_processors=[mailbox_history_processor],
+    retries=5,
 )
 
 

@@ -4,7 +4,6 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -20,6 +19,7 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from redis import asyncio as redis
 
+from .active_run import get_active_run_lease
 from .chat_schemas import (
     ChatMessagesResponse,
     ChatRequestExtra,
@@ -34,18 +34,19 @@ from .chat_schemas import (
 from .db.message_codec import messages_from_json
 from .db.runtime import DatabaseRuntime
 from .db.service import (
-    create_chat_run,
     delete_chat_records,
-    get_active_run,
     get_latest_snapshot,
     get_latest_snapshot_per_conversation,
-    update_run_task_id,
 )
 from .lifespan import get_db_runtime
 from .mailbox import push_to_mailbox
 from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
-from .tasks.run_agent_task import run_agent_task
+from .tasks.run_agent_task import (
+    _filter_deferred_tool_results,
+    ensure_agent_mailbox_run,
+    ensure_agent_request_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,6 @@ def create_chat_router(
         request: Request,
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
-        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> Response:
         raw_body = _normalize_tool_part_states(await request.body())
         extra_data = _validate_chat_request(
@@ -319,48 +319,70 @@ def create_chat_router(
         )
         redis_url = _require_redis_url(settings)
 
-        # Extract user message text for the mailbox.
         run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
+        request_adapter = VercelAIAdapter[Any, Any](
+            agent=agent,
+            run_input=run_input,
+            accept='text/event-stream',
+            sdk_version=6,
+        )
+        deferred_tool_results = _filter_deferred_tool_results(
+            request_adapter.messages,
+            request_adapter.deferred_tool_results,
+        )
         user_text = _extract_last_user_text(run_input.messages)
 
-        # Check if the agent already has an active run.
-        with db_runtime.session() as session:
-            active_run = get_active_run(session, conversation_id, agent_key)
+        if deferred_tool_results is not None:
+            run_id = await ensure_agent_request_run(
+                agent_key,
+                conversation_id,
+                request_body=raw_body.decode('utf-8'),
+                selected_model=extra_data.model,
+                system_prompt=(
+                    extra_data.system_prompt if can_override_system_prompt else None
+                ),
+            )
+            if run_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        'Cannot resume deferred tool request while an '
+                        'agent run is already active'
+                    ),
+                )
 
-        if active_run is not None:
-            # Agent is active — push to mailbox, return 202.
-            redis_client = redis.from_url(redis_url, decode_responses=True)
-            try:
-                if user_text:
-                    await push_to_mailbox(
-                        redis_client,
-                        agent_key=agent_key,
-                        conversation_id=conversation_id,
-                        sender='user',
-                        content=user_text,
-                    )
-            finally:
-                await redis_client.aclose()
+            stream_key = chat_run_stream_key(
+                agent_key=agent_key,
+                conversation_id=conversation_id,
+                run_id=run_id,
+            )
+            return _streaming_response(redis_url, stream_key)
+
+        if not user_text:
+            raise HTTPException(status_code=400, detail='No user message content found')
+
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            await push_to_mailbox(
+                redis_client,
+                agent_key=agent_key,
+                conversation_id=conversation_id,
+                sender='user',
+                content=user_text,
+            )
+            run_id = await ensure_agent_mailbox_run(
+                agent_key,
+                conversation_id,
+                selected_model=extra_data.model,
+                system_prompt=(
+                    extra_data.system_prompt if can_override_system_prompt else None
+                ),
+            )
+        finally:
+            await redis_client.aclose()
+
+        if run_id is None:
             return Response(status_code=202)
-
-        # Agent is idle — enqueue a new run.
-        run_id = str(uuid4())
-        with db_runtime.session() as session:
-            create_chat_run(session, run_id, conversation_id, agent_key)
-
-        task = await run_agent_task.kiq(
-            run_id=run_id,
-            conversation_id=conversation_id,
-            agent_key=agent_key,
-            request_body=raw_body.decode('utf-8'),
-            selected_model=extra_data.model,
-            system_prompt=(
-                extra_data.system_prompt if can_override_system_prompt else None
-            ),
-        )
-
-        with db_runtime.session() as session:
-            update_run_task_id(session, run_id, task.task_id)
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
@@ -374,46 +396,52 @@ def create_chat_router(
     async def stream_chat(
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
-        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> Response:
         redis_url = _require_redis_url(settings)
 
-        with db_runtime.session() as session:
-            active_run = get_active_run(session, conversation_id, agent_key)
-            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            active_lease = await get_active_run_lease(
+                redis_client,
+                agent_key,
+                conversation_id,
+            )
+        finally:
+            await redis_client.aclose()
 
-        if active_run is None or active_run.run_id is None:
-            return Response(status_code=204)
-
-        if latest_snapshot is not None and latest_snapshot.run_id == active_run.run_id:
+        if active_lease is None:
             return Response(status_code=204)
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
             conversation_id=conversation_id,
-            run_id=active_run.run_id,
+            run_id=active_lease.run_id,
         )
         return _streaming_response(redis_url, stream_key, start_id='0-0')
 
     @router.get('/chat/{conversation_id}/run')
     async def get_run_status(
         conversation_id: str,
-        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
+        settings: AppSettings = Depends(get_settings),
     ) -> RunStatusResponse:
-        with db_runtime.session() as session:
-            active_run = get_active_run(session, conversation_id, agent_key)
-            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+        redis_url = _require_redis_url(settings)
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            active_lease = await get_active_run_lease(
+                redis_client,
+                agent_key,
+                conversation_id,
+            )
+        finally:
+            await redis_client.aclose()
 
-        if active_run is None or active_run.run_id is None:
-            return RunStatusResponse(active=False)
-
-        if latest_snapshot is not None and latest_snapshot.run_id == active_run.run_id:
+        if active_lease is None:
             return RunStatusResponse(active=False)
 
         return RunStatusResponse(
             active=True,
-            run_id=active_run.run_id,
-            status=active_run.status,
+            run_id=active_lease.run_id,
+            status=active_lease.status,
         )
 
     @router.get('/chat/{conversation_id}')

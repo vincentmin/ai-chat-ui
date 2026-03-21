@@ -42,13 +42,13 @@ async def tell(ctx: RunContext[AgentDeps], agent: str, message: str) -> str:
         content=message,
     )
 
-    # Wake up the target agent if it has no active run.
+    # Start the target agent if it is currently idle.
     # Import here to avoid circular dependency with run_agent_task.
-    from .tasks.run_agent_task import enqueue_wakeup_run
+    from .tasks.run_agent_task import ensure_agent_mailbox_run
 
-    await enqueue_wakeup_run(
-        agent_key=agent,
-        conversation_id=deps.conversation_id,
+    await ensure_agent_mailbox_run(
+        agent,
+        deps.conversation_id,
     )
 
     return f'Message sent to {agent}.'

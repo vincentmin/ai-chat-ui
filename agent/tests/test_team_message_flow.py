@@ -1,9 +1,4 @@
-"""Tests for inter-agent message delivery in team mode.
-
-Covers:
-  - Post-run mailbox check must be non-destructive (Bug 1a)
-  - User-initiated runs must use backend snapshot history (Bug 1b)
-"""
+"""Tests for inter-agent message delivery in team mode."""
 
 from __future__ import annotations
 
@@ -22,7 +17,6 @@ from pydantic_ai.messages import (
 from chatbot.db import to_json_value
 from chatbot.db.runtime import DatabaseRuntime
 from chatbot.db.service import create_chat_run, save_run_snapshot
-from chatbot.mailbox import MailboxMessage
 
 run_agent_task_module = importlib.import_module('chatbot.tasks.run_agent_task')
 
@@ -44,32 +38,47 @@ def _fake_agent() -> SimpleNamespace:
     return SimpleNamespace()
 
 
+def _patch_active_run_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_prepare(_client, run_id: str, conversation_id: str, agent_key: str):
+        return SimpleNamespace(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            agent_key=agent_key,
+        )
+
+    async def fake_heartbeat(_client, _lease) -> None:
+        return None
+
+    async def fake_release(
+        _client, _agent_key: str, _conversation_id: str, _run_id: str
+    ):
+        return True
+
+    monkeypatch.setattr(run_agent_task_module, '_prepare_active_run', fake_prepare)
+    monkeypatch.setattr(run_agent_task_module, '_heartbeat_active_run', fake_heartbeat)
+    monkeypatch.setattr(run_agent_task_module, 'release_active_run', fake_release)
+
+
 class _FakeEventStream:
     @staticmethod
     def encode_event(chunk: str) -> str:
         return f'encoded:{chunk}'
 
 
-# ---------------------------------------------------------------------------
-# Bug 1a: post-run mailbox check must NOT drain messages
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.anyio
-async def test_post_run_mailbox_check_does_not_consume_messages(
+async def test_mailbox_task_processes_follow_up_messages_in_same_run(
     db_runtime: DatabaseRuntime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """After a run completes, the post-run check should peek at the mailbox
-    (non-destructive) rather than drain it, so that the subsequent wake-up
-    run can actually read the messages."""
+    """Mailbox runs should loop and consume follow-up messages without re-enqueueing."""
+
+    _patch_active_run_execution(monkeypatch)
 
     with db_runtime.session() as session:
         create_chat_run(session, 'run-drain', 'conv-drain', 'sql')
 
     fake_redis_client = _FakeRedisClient()
-    drain_calls: list[tuple[str, str]] = []
-    wakeup_calls: list[tuple[str, str]] = []
+    captured_histories: list[list[ModelRequest | ModelResponse]] = []
 
     monkeypatch.setattr(
         run_agent_task_module, '_get_worker_db_runtime', lambda: db_runtime
@@ -99,30 +108,27 @@ async def test_post_run_mailbox_check_does_not_consume_messages(
         run_agent_task_module, 'publish_terminal', fake_publish_terminal
     )
 
-    # Track drain_mailbox calls — the post-run check should NOT call it
-    async def tracking_drain_mailbox(
-        _client: object, agent_key: str, conv_id: str
-    ) -> list[MailboxMessage]:
-        drain_calls.append((agent_key, conv_id))
-        return [MailboxMessage(sender='arxiv', content='foo', timestamp=1.0)]
+    drain_batches = [
+        [SimpleNamespace(sender='arxiv', content='foo', timestamp=1.0)],
+        [SimpleNamespace(sender='arxiv', content='bar', timestamp=2.0)],
+        [],
+    ]
+
+    async def tracking_drain_mailbox(_client: object, _agent_key: str, _conv_id: str):
+        return drain_batches.pop(0)
 
     monkeypatch.setattr(run_agent_task_module, 'drain_mailbox', tracking_drain_mailbox)
 
-    # Provide mailbox_is_empty — returns False (has messages)
+    mailbox_empty_results = [False, True]
+
     async def fake_mailbox_is_empty(
         _client: object, _agent_key: str, _conv_id: str
     ) -> bool:
-        return False
+        return mailbox_empty_results.pop(0)
 
     monkeypatch.setattr(
         run_agent_task_module, 'mailbox_is_empty', fake_mailbox_is_empty
     )
-
-    # Track _enqueue_self_wakeup calls
-    async def tracking_enqueue(agent_key: str, conversation_id: str) -> None:
-        wakeup_calls.append((agent_key, conversation_id))
-
-    monkeypatch.setattr(run_agent_task_module, '_enqueue_self_wakeup', tracking_enqueue)
 
     class FakeResult:
         run_id = 'result-drain'
@@ -165,34 +171,43 @@ async def test_post_run_mailbox_check_does_not_consume_messages(
             message_history=None,
             toolsets=None,
         ):
+            del output_type
+            del deferred_tool_results
+            del model
+            del instructions
+            del deps
             del toolsets
+            captured_histories.append(list(message_history or []))
             await on_complete(FakeResult())
             yield 'chunk'
 
     monkeypatch.setattr(run_agent_task_module, 'VercelAIAdapter', FakeAdapter)
 
-    await run_agent_task_module.run_agent_task.original_func(
+    await run_agent_task_module.run_agent_mailbox_task.original_func(
         run_id='run-drain',
         conversation_id='conv-drain',
         agent_key='sql',
-        request_body='{"messages":[]}',
         selected_model=None,
         system_prompt=None,
     )
 
-    # The post-run check MUST NOT call drain_mailbox (it should only peek)
-    assert drain_calls == [], (
-        f'drain_mailbox was called {len(drain_calls)} time(s) — '
-        'the post-run check should use mailbox_is_empty instead'
-    )
-
-    # The wake-up should still be enqueued because the mailbox has messages
-    assert ('sql', 'conv-drain') in wakeup_calls
-
-
-# ---------------------------------------------------------------------------
-# Bug 1b: user-initiated run must use backend snapshot for history
-# ---------------------------------------------------------------------------
+    assert len(captured_histories) == 2
+    first_cycle_text = [
+        part.content
+        for part in captured_histories[0]
+        if isinstance(part, ModelRequest)
+        for part in part.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    second_cycle_text = [
+        part.content
+        for part in captured_histories[1]
+        if isinstance(part, ModelRequest)
+        for part in part.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert first_cycle_text == ['[Message from arxiv]: foo']
+    assert second_cycle_text[-1] == '[Message from arxiv]: bar'
 
 
 @pytest.mark.anyio
@@ -204,7 +219,8 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
     (missing wake-up run messages), the backend should use the latest
     snapshot as canonical history so the agent sees all prior messages."""
 
-    # Persist a snapshot that includes a wake-up run exchange
+    _patch_active_run_execution(monkeypatch)
+
     wakeup_messages = [
         ModelRequest(parts=[UserPromptPart(content='Tell arxiv hi')]),
         ModelResponse(parts=[TextPart(content='Done — told arxiv.')]),
@@ -225,6 +241,7 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
 
     fake_redis_client = _FakeRedisClient()
     captured_message_history: dict[str, Any] = {}
+    captured_adapter_messages: dict[str, Any] = {}
 
     monkeypatch.setattr(
         run_agent_task_module, '_get_worker_db_runtime', lambda: db_runtime
@@ -326,6 +343,7 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
         ):
             del toolsets
             captured_message_history['value'] = message_history
+            captured_adapter_messages['value'] = list(self.messages)
             await on_complete(FakeResult())
             yield 'chunk'
 
@@ -335,7 +353,7 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
     with db_runtime.session() as session:
         create_chat_run(session, 'run-snap-2', 'conv-snap', 'sql')
 
-    await run_agent_task_module.run_agent_task.original_func(
+    await run_agent_task_module.run_agent_request_task.original_func(
         run_id='run-snap-2',
         conversation_id='conv-snap',
         agent_key='sql',
@@ -350,6 +368,7 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
     # The message_history should include the snapshot's wake-up messages
     mh = captured_message_history.get('value')
     assert mh is not None, 'message_history should be provided (not None)'
+    assert captured_adapter_messages.get('value') == []
 
     # Should contain the wake-up run exchange
     user_texts = [
@@ -372,6 +391,8 @@ async def test_user_initiated_run_does_not_duplicate_snapshot_messages(
 ) -> None:
     """When backend snapshot history is used, the effective agent input should
     not duplicate messages already present in the snapshot."""
+
+    _patch_active_run_execution(monkeypatch)
 
     persisted_messages = [
         ModelRequest(parts=[UserPromptPart(content='Tell arxiv hi')]),
@@ -499,10 +520,8 @@ async def test_user_initiated_run_does_not_duplicate_snapshot_messages(
             del instructions
             del deps
             del toolsets
-            captured_effective_history['value'] = [
-                *(message_history or []),
-                *self.messages,
-            ]
+            captured_effective_history['value'] = list(message_history or [])
+            assert self.messages == []
             await on_complete(FakeResult())
             yield 'chunk'
 
@@ -511,7 +530,7 @@ async def test_user_initiated_run_does_not_duplicate_snapshot_messages(
     with db_runtime.session() as session:
         create_chat_run(session, 'run-no-dupe-2', 'conv-no-dupe', 'sql')
 
-    await run_agent_task_module.run_agent_task.original_func(
+    await run_agent_task_module.run_agent_request_task.original_func(
         run_id='run-no-dupe-2',
         conversation_id='conv-no-dupe',
         agent_key='sql',
