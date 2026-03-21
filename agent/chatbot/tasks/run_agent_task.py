@@ -29,10 +29,7 @@ from ..db.service import (
     save_run_snapshot,
     update_run_status,
 )
-from ..history_processor import (
-    create_mailbox_history_processor,
-    mailbox_messages_to_model_requests,
-)
+from ..history_processor import mailbox_messages_to_model_requests
 from ..mailbox import drain_mailbox, mailbox_is_empty
 from ..settings import get_settings
 from ..streaming.redis_stream import (
@@ -40,6 +37,7 @@ from ..streaming.redis_stream import (
     publish_chunk,
     publish_terminal,
 )
+from ..team_tools import TEAM_TOOLSET, build_team_instructions
 from .agent_registry import get_agent, get_team_agents, resolve_model_ref
 from .broker import broker
 
@@ -48,6 +46,20 @@ logger = logging.getLogger(__name__)
 
 
 _worker_db_runtime: DatabaseRuntime | None = None
+
+
+def _build_run_instructions(
+    agent_key: str,
+    team_agents: list[str],
+    system_prompt: str | None,
+) -> str | tuple[str, ...] | None:
+    instructions = [build_team_instructions(agent_key, team_agents), system_prompt]
+    resolved = tuple(instruction for instruction in instructions if instruction)
+    if not resolved:
+        return None
+    if len(resolved) == 1:
+        return resolved[0]
+    return resolved
 
 
 def _get_worker_db_runtime() -> DatabaseRuntime:
@@ -141,20 +153,18 @@ async def run_agent_task(
         agent = get_agent(agent_key)
         team_agents = get_team_agents()
 
-        # Install mailbox history processor for the duration of this run.
-        history_processor = create_mailbox_history_processor(
-            redis_client,
-            agent_key,
-            conversation_id,
-        )
-        agent.history_processors = [history_processor]
-
         deps = AgentDeps(
             conversation_id=conversation_id,
             agent_key=agent_key,
             team_agents=team_agents,
             redis_client=redis_client,
         )
+        run_instructions = _build_run_instructions(
+            agent_key,
+            team_agents,
+            system_prompt,
+        )
+        run_toolsets = [TEAM_TOOLSET] if len(team_agents) > 1 else None
 
         if request_body is not None:
             # User-initiated run — parse Vercel AI SDK request body.
@@ -227,10 +237,11 @@ async def run_agent_task(
             output_type=[str, DeferredToolRequests],
             deferred_tool_results=deferred_tool_results,
             model=model_ref,
-            instructions=system_prompt,
+            instructions=run_instructions,
             on_complete=on_complete,
             deps=deps,
             message_history=message_history,
+            toolsets=run_toolsets,
         ):
             await publish_chunk(
                 redis_client, stream_key, event_stream.encode_event(chunk)
@@ -257,7 +268,6 @@ async def run_agent_task(
             f'data: {DoneChunk().encode(5)}\n\n',
         )
     finally:
-        agent.history_processors = []
         await publish_terminal(redis_client, stream_key)
         await redis_client.aclose()
 

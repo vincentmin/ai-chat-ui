@@ -3,11 +3,17 @@ from __future__ import annotations
 import logging
 
 from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai.toolsets import FunctionToolset
 
 from .agent_deps import AgentDeps
 from .mailbox import push_to_mailbox
 
 logger = logging.getLogger(__name__)
+
+_AGENT_DESCRIPTIONS: dict[str, str] = {
+    'sql': 'An expert SQL assistant using the Chinook sample database.',
+    'arxiv': 'An expert research assistant with access to Arxiv papers.',
+}
 
 
 async def tell(ctx: RunContext[AgentDeps], agent: str, message: str) -> str:
@@ -46,3 +52,34 @@ async def tell(ctx: RunContext[AgentDeps], agent: str, message: str) -> str:
     )
 
     return f'Message sent to {agent}.'
+
+
+TEAM_TOOLSET = FunctionToolset[AgentDeps]([tell])
+
+
+def build_team_instructions(agent_key: str, team_agents: list[str]) -> str | None:
+    """Return runtime instructions for inter-agent collaboration."""
+    teammates = [agent for agent in team_agents if agent != agent_key]
+    if not teammates:
+        return None
+
+    teammate_lines = '\n'.join(
+        f'- {agent}: {_AGENT_DESCRIPTIONS.get(agent, agent)}' for agent in teammates
+    )
+
+    return (
+        '## Team collaboration\n'
+        'You are part of a team of agents. Your teammates are:\n'
+        f'{teammate_lines}\n\n'
+        'Messages from other agents appear as user messages prefixed with '
+        '"[Message from <agent>]: ". When another agent asks you to do '
+        'something or requests a reply, you MUST use the `tell` tool to '
+        'send your response back; simply writing text in your reply does '
+        'not deliver it to the other agent.\n\n'
+        'The `tell` tool is asynchronous: it delivers your message and '
+        'returns immediately. You do not need to wait for a reply. '
+        'If the other agent responds later, you will be automatically '
+        'woken up with their reply as a new "[Message from ...]" message. '
+        'After calling `tell`, finish your current turn normally. '
+        'The end user can see all agent messages, so keep coordination readable.'
+    )

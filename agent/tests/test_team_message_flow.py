@@ -41,7 +41,7 @@ class _FakeRedisClient:
 
 
 def _fake_agent() -> SimpleNamespace:
-    return SimpleNamespace(history_processors=[])
+    return SimpleNamespace()
 
 
 class _FakeEventStream:
@@ -163,7 +163,9 @@ async def test_post_run_mailbox_check_does_not_consume_messages(
             on_complete: Any = None,
             deps=None,
             message_history=None,
+            toolsets=None,
         ):
+            del toolsets
             await on_complete(FakeResult())
             yield 'chunk'
 
@@ -320,7 +322,9 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
             on_complete: Any = None,
             deps=None,
             message_history=None,
+            toolsets=None,
         ):
+            del toolsets
             captured_message_history['value'] = message_history
             await on_complete(FakeResult())
             yield 'chunk'

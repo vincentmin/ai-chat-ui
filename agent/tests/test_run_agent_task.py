@@ -30,8 +30,7 @@ class _FakeRedisClient:
 
 
 def _fake_agent() -> SimpleNamespace:
-    """Return a fake agent that supports attribute assignment."""
-    return SimpleNamespace(history_processors=[])
+    return SimpleNamespace()
 
 
 def test_filter_deferred_tool_results_matches_last_model_response_calls() -> None:
@@ -238,11 +237,13 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
             on_complete,
             deps=None,
             message_history=None,
+            toolsets=None,
         ):
             captured_run_stream_args['model'] = model
             captured_run_stream_args['instructions'] = instructions
             captured_run_stream_args['output_type'] = output_type
             captured_run_stream_args['deferred_tool_results'] = deferred_tool_results
+            captured_run_stream_args['toolsets'] = toolsets
             await on_complete(FakeResult())
             yield 'chunk-1'
             yield 'chunk-2'
@@ -279,12 +280,13 @@ async def test_run_agent_task_success_persists_snapshot_and_completes(
     assert len(snapshots) == 1
     assert snapshots[0].run_id == 'result-run-1'
     assert snapshots[0].conversation_id == 'conversation-1'
-    assert captured_run_stream_args == {
-        'model': 'resolved:openai-responses:gpt-5',
-        'instructions': 'be concise',
-        'output_type': [str, DeferredToolRequests],
-        'deferred_tool_results': None,
-    }
+    assert captured_run_stream_args['model'] == 'resolved:openai-responses:gpt-5'
+    assert captured_run_stream_args['output_type'] == [str, DeferredToolRequests]
+    assert captured_run_stream_args['deferred_tool_results'] is None
+    assert captured_run_stream_args['instructions'] is not None
+    assert 'be concise' in captured_run_stream_args['instructions']
+    assert captured_run_stream_args['toolsets'] is not None
+    assert len(captured_run_stream_args['toolsets']) == 1
     assert [call[2] for call in publish_calls] == ['encoded:chunk-1', 'encoded:chunk-2']
     assert len(terminal_calls) == 1
     assert fake_redis_client.closed is True
@@ -384,6 +386,7 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
             on_complete,
             deps=None,
             message_history=None,
+            toolsets=None,
         ):
             del model
             del instructions
@@ -392,6 +395,7 @@ async def test_run_agent_task_failure_marks_run_failed_and_publishes_error(
             del deferred_tool_results
             del deps
             del message_history
+            del toolsets
             raise RuntimeError('boom')
             yield 'unreachable'
 

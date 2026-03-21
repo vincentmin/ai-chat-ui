@@ -8,6 +8,7 @@ import pydantic_ai
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from chatbot.agent_deps import AgentDeps
+from chatbot.history_processor import mailbox_history_processor
 
 ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 ARXIV_ABS_BASE_URL = 'https://arxiv.org/abs/'
@@ -46,26 +47,10 @@ agent = pydantic_ai.Agent(
         'You are an expert research assistant with access to Arxiv. '
         'Use search to find papers, fetch to read paper PDFs, and display_paper '
         'to show or preview a paper to the user in the UI. Be proactive in suggesting '
-        'to display papers that might be relevant to the user.\n\n'
-        '## Team collaboration\n'
-        'You are part of a team of agents. Your teammates are:\n'
-        '- sql: An expert SQL assistant using the Chinook sample database.\n\n'
-        'Messages from other agents appear as user messages prefixed with '
-        '"[Message from <agent>]: ". When another agent asks you to do '
-        'something or requests a reply, you MUST use the `tell` tool to '
-        'send your response back — simply writing text in your reply does '
-        'NOT deliver it to the other agent.\n\n'
-        'The `tell` tool is asynchronous: it delivers your message and '
-        'returns immediately. You do not need to wait for a reply. '
-        'If the other agent responds later, you will be automatically '
-        'woken up with their reply as a new "[Message from ...]" message. '
-        'So after calling `tell`, finish your current turn normally — '
-        'you can continue doing other work if there is any, or end with '
-        'a brief status message to the user.'
-        'The end user has visibility into all your messages, '
-        'so you can inform them using your regular messages.'
+        'to display papers that might be relevant to the user.'
     ),
     deps_type=AgentDeps,
+    history_processors=[mailbox_history_processor],
 )
 
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
-from redis import asyncio as redis
 
+from .agent_deps import AgentDeps
 from .mailbox import MailboxMessage, drain_mailbox
 
 
@@ -20,22 +21,21 @@ def mailbox_messages_to_model_requests(
     ]
 
 
-def create_mailbox_history_processor(
-    redis_client: redis.Redis,
-    agent_key: str,
-    conversation_id: str,
-):
-    """Return a history_processor that drains the mailbox before each model invocation.
+async def mailbox_history_processor(
+    ctx: RunContext[AgentDeps], messages: list[ModelMessage]
+) -> list[ModelMessage]:
+    """Drain the agent mailbox before each model invocation.
 
-    Pydantic AI calls ``history_processor`` before every model invocation in
-    the react loop, giving us a hook to inject inter-agent messages.
+    This uses ``RunContext`` so the processor reads the Redis client and
+    conversation metadata from runtime deps instead of mutating the agent.
     """
+    mailbox = await drain_mailbox(
+        ctx.deps.redis_client,
+        ctx.deps.agent_key,
+        ctx.deps.conversation_id,
+    )
+    if not mailbox:
+        return messages
 
-    async def process_history(messages: list[ModelMessage]) -> list[ModelMessage]:
-        mailbox = await drain_mailbox(redis_client, agent_key, conversation_id)
-        if not mailbox:
-            return messages
-        injected = mailbox_messages_to_model_requests(mailbox)
-        return [*messages, *injected]
-
-    return process_history
+    injected = mailbox_messages_to_model_requests(mailbox)
+    return [*messages, *injected]
