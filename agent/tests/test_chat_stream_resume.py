@@ -5,12 +5,18 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from chatbot.active_run import new_active_run_lease
 from chatbot.db.runtime import DatabaseRuntime
 from chatbot.db.service import create_chat_run, save_run_snapshot
 
 
+async def _get_active_run_lease(*_args: object, **_kwargs: object):
+    return None
+
+
 def test_stream_returns_204_when_no_active_run(client: TestClient) -> None:
-    response = client.get('/api/chat/conversation-1/stream')
+    with patch('chatbot.chat_router.get_active_run_lease', _get_active_run_lease):
+        response = client.get('/api/chat/conversation-1/stream')
     assert response.status_code == 204
 
 
@@ -30,11 +36,17 @@ def test_stream_returns_204_when_latest_snapshot_matches_active_run(
             model_messages_json=[],
         )
 
-    with patch('chatbot.chat_router.iter_stream_events') as iter_mock:
+    async def fake_get_active_run_lease(*_args: object, **_kwargs: object):
+        return new_active_run_lease(run_id, 'sql', conversation_id, status='running')
+
+    with (
+        patch('chatbot.chat_router.get_active_run_lease', fake_get_active_run_lease),
+        patch('chatbot.chat_router.iter_stream_events') as iter_mock,
+    ):
         response = client.get(f'/api/chat/{conversation_id}/stream')
 
-    assert response.status_code == 204
-    iter_mock.assert_not_called()
+    assert response.status_code == 200
+    iter_mock.assert_called_once()
 
 
 def test_stream_relays_chunks_for_active_run_without_snapshot(
@@ -60,7 +72,11 @@ def test_stream_relays_chunks_for_active_run_without_snapshot(
         yield 'chunk', 'data: {"type":"text-delta","delta":"Hello"}\n\n'
         yield 'terminal', ''
 
+    async def fake_get_active_run_lease(*_args: object, **_kwargs: object):
+        return new_active_run_lease(run_id, 'sql', conversation_id, status='running')
+
     with (
+        patch('chatbot.chat_router.get_active_run_lease', fake_get_active_run_lease),
         patch('chatbot.chat_router.iter_stream_events', fake_iter_stream_events),
         client.stream('GET', f'/api/chat/{conversation_id}/stream') as response,
     ):
