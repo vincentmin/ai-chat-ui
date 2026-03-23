@@ -7,21 +7,19 @@ import { Part } from './Part'
 const noop = vi.fn()
 
 describe('Part', () => {
-  it('renders user message text that looks like a markdown reference link definition', () => {
-    // [Message from sql]: Hi  is valid markdown reference-link-definition syntax
-    // which produces NO visible output under CommonMark.
-    // User messages must render text literally, not through a markdown renderer.
+  it('renders mailbox user messages literally and shows You instead of the raw mailbox prefix', () => {
     const message: UIMessage = {
       id: 'msg-1',
       role: 'user',
-      parts: [{ type: 'text' as const, text: '[Message from sql]: Hi' }],
+      parts: [{ type: 'text' as const, text: '[[mailbox {"sender":"user"}]]\nHi' }],
     }
     const part = message.parts[0]
 
     render(<Part part={part} message={message} regen={noop} addToolApprovalResponse={noop} index={0} />)
 
-    // The text MUST be visible in the DOM — not swallowed by markdown parsing.
-    expect(screen.getByText('[Message from sql]: Hi')).toBeTruthy()
+    expect(screen.getByText('You')).toBeTruthy()
+    expect(screen.getByText('Hi')).toBeTruthy()
+    expect(screen.queryByText('[[mailbox {"sender":"user"}]]')).toBeNull()
   })
 
   it('renders assistant message text through markdown', () => {
@@ -35,5 +33,20 @@ describe('Part', () => {
     render(<Part part={part} message={message} regen={noop} addToolApprovalResponse={noop} index={0} />)
 
     expect(screen.getByText('Hello, how can I help?')).toBeTruthy()
+  })
+
+  it('renders agent mailbox messages without the transport header', () => {
+    const message: UIMessage = {
+      id: 'msg-3',
+      role: 'user',
+      parts: [{ type: 'text' as const, text: '[[mailbox {"sender":"arxiv"}]]\nFound two relevant papers.' }],
+    }
+    const part = message.parts[0]
+
+    render(<Part part={part} message={message} regen={noop} addToolApprovalResponse={noop} index={0} />)
+
+    expect(screen.getByText('arxiv')).toBeTruthy()
+    expect(screen.getByText('Found two relevant papers.')).toBeTruthy()
+    expect(screen.queryByText('[[mailbox {"sender":"arxiv"}]]')).toBeNull()
   })
 })

@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
 from chatbot.db import to_json_value
 from chatbot.db.runtime import DatabaseRuntime
 from chatbot.db.service import create_chat_run, save_run_snapshot
+from chatbot.history_processor import format_mailbox_message
 
 run_agent_task_module = importlib.import_module('chatbot.tasks.run_agent_task')
 
@@ -206,8 +207,8 @@ async def test_mailbox_task_processes_follow_up_messages_in_same_run(
         for part in part.parts
         if isinstance(part, UserPromptPart)
     ]
-    assert first_cycle_text == ['[Message from arxiv]: foo']
-    assert second_cycle_text[-1] == '[Message from arxiv]: bar'
+    assert first_cycle_text == [format_mailbox_message('arxiv', 'foo')]
+    assert second_cycle_text[-1] == format_mailbox_message('arxiv', 'bar')
 
 
 @pytest.mark.anyio
@@ -225,7 +226,9 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
         ModelRequest(parts=[UserPromptPart(content='Tell arxiv hi')]),
         ModelResponse(parts=[TextPart(content='Done — told arxiv.')]),
         # These are from the wake-up run (frontend doesn't know about them):
-        ModelRequest(parts=[UserPromptPart(content='[Message from arxiv]: foo')]),
+        ModelRequest(
+            parts=[UserPromptPart(content=format_mailbox_message('arxiv', 'foo'))]
+        ),
         ModelResponse(parts=[TextPart(content='Got it, foo received.')]),
     ]
 
@@ -378,7 +381,7 @@ async def test_user_initiated_run_uses_snapshot_history_for_team_agents(
         for part in msg.parts
         if isinstance(part, UserPromptPart)
     ]
-    assert '[Message from arxiv]: foo' in user_texts, (
+    assert format_mailbox_message('arxiv', 'foo') in user_texts, (
         f'Wake-up run mailbox message not found in message_history. '
         f'User texts seen: {user_texts}'
     )
@@ -397,7 +400,9 @@ async def test_user_initiated_run_does_not_duplicate_snapshot_messages(
     persisted_messages = [
         ModelRequest(parts=[UserPromptPart(content='Tell arxiv hi')]),
         ModelResponse(parts=[TextPart(content='Done - told arxiv.')]),
-        ModelRequest(parts=[UserPromptPart(content='[Message from arxiv]: foo')]),
+        ModelRequest(
+            parts=[UserPromptPart(content=format_mailbox_message('arxiv', 'foo'))]
+        ),
         ModelResponse(parts=[TextPart(content='Got it, foo received.')]),
     ]
 
@@ -562,7 +567,7 @@ async def test_user_initiated_run_does_not_duplicate_snapshot_messages(
 
     assert user_texts == [
         'Tell arxiv hi',
-        '[Message from arxiv]: foo',
+        format_mailbox_message('arxiv', 'foo'),
         'Did you receive foo?',
     ]
     assert assistant_texts == [

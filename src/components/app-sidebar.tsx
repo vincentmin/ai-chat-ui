@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { getConversations, getTeamConversations, removeConversation, removeTeamConversation } from '@/lib/api'
+import { formatConversationPreview } from '@/lib/message-display'
 import { cn } from '@/lib/utils'
 import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
@@ -159,44 +160,48 @@ export function AppSidebar({
 
             <SidebarGroupContent>
               <SidebarMenu>
-                {conversations.map((conversation, index) => (
-                  <SidebarMenuItem key={index} className="group/sidebar-menu-item">
-                    <div className="flex items-center gap-1 h-auto">
-                      <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
-                        <Link
-                          to={conversationRoute}
-                          params={{ conversationId: conversation.id }}
-                          className={cn('h-auto flex items-start gap-2', {
-                            'bg-accent pointer-events-none': conversation.id === conversationId,
-                          })}
-                        >
-                          <MessageCircle className="size-3 mt-1" />
-                          <span className="flex flex-col items-start">
-                            <span className="truncate max-w-44">{conversation.firstMessage}</span>
-                            <span className="text-xs opacity-30">
-                              {new Date(conversation.timestamp).toLocaleString()}
-                            </span>
-                          </span>
-                        </Link>
-                      </SidebarMenuButton>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-auto p-1.5 opacity-0 group-hover/sidebar-menu-item:opacity-100 transition-opacity group-data-[state=collapsed]:hidden absolute right-0 self-start"
-                            onClick={(e) => {
-                              handleDeleteClick(e, conversation)
-                            }}
+                {conversations.map((conversation, index) => {
+                  const conversationPreview = formatConversationPreview(conversation.firstMessage)
+
+                  return (
+                    <SidebarMenuItem key={index} className="group/sidebar-menu-item">
+                      <div className="flex items-center gap-1 h-auto">
+                        <SidebarMenuButton asChild tooltip={conversationPreview} className="flex-1">
+                          <Link
+                            to={conversationRoute}
+                            params={{ conversationId: conversation.id }}
+                            className={cn('h-auto flex items-start gap-2', {
+                              'bg-accent pointer-events-none': conversation.id === conversationId,
+                            })}
                           >
-                            <Trash className="size-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Delete conversation</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </SidebarMenuItem>
-                ))}
+                            <MessageCircle className="size-3 mt-1" />
+                            <span className="flex flex-col items-start">
+                              <span className="truncate max-w-44">{conversationPreview}</span>
+                              <span className="text-xs opacity-30">
+                                {new Date(conversation.timestamp).toLocaleString()}
+                              </span>
+                            </span>
+                          </Link>
+                        </SidebarMenuButton>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-auto p-1.5 opacity-0 group-hover/sidebar-menu-item:opacity-100 transition-opacity group-data-[state=collapsed]:hidden absolute right-0 self-start"
+                              onClick={(e) => {
+                                handleDeleteClick(e, conversation)
+                              }}
+                            >
+                              <Trash className="size-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete conversation</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </SidebarMenuItem>
+                  )
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

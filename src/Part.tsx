@@ -2,6 +2,8 @@ import { Message, MessageContent } from '@/components/ai-elements/message'
 
 import { Actions, Action } from '@/components/ai-elements/actions'
 import { Response } from '@/components/ai-elements/response'
+import { formatMailboxSenderLabel, parseMailboxMessage } from '@/lib/message-display'
+import { cn } from '@/lib/utils'
 import { CopyIcon, RefreshCcwIcon } from 'lucide-react'
 import type { UIDataTypes, UIMessagePart, UITools, UIMessage } from 'ai'
 import { isToolPart, ToolPart } from './Tool'
@@ -37,12 +39,33 @@ export function Part({ part, message, regen, addToolApprovalResponse, index }: P
   }
 
   if (part.type === 'text') {
+    const parsedMailboxMessage = parseMailboxMessage(part.text)
+    const isMailboxMessage = parsedMailboxMessage.isMailbox && parsedMailboxMessage.sender !== null
+    const bubbleFrom = isMailboxMessage && parsedMailboxMessage.sender !== 'user' ? 'assistant' : message.role
+    const senderLabel = parsedMailboxMessage.sender ? formatMailboxSenderLabel(parsedMailboxMessage.sender) : null
+
     return (
       <div className="py-4">
-        <Message from={message.role}>
-          <MessageContent>
-            {message.role === 'user' ? <p>{part.text}</p> : <Response>{part.text}</Response>}
-          </MessageContent>
+        <Message from={bubbleFrom}>
+          <div className="flex flex-col gap-1">
+            {isMailboxMessage && senderLabel && (
+              <div
+                className={cn(
+                  'px-1 text-[11px] font-medium leading-none text-muted-foreground',
+                  bubbleFrom === 'user' ? 'text-right' : 'text-left',
+                )}
+              >
+                {senderLabel}
+              </div>
+            )}
+            <MessageContent>
+              {message.role === 'assistant' && !isMailboxMessage ? (
+                <Response>{parsedMailboxMessage.body}</Response>
+              ) : (
+                <p className="whitespace-pre-wrap">{parsedMailboxMessage.body}</p>
+              )}
+            </MessageContent>
+          </div>
         </Message>
         {message.role === 'assistant' && index === message.parts.length - 1 && (
           <Actions className="mt-1">
@@ -51,7 +74,7 @@ export function Part({ part, message, regen, addToolApprovalResponse, index }: P
             </Action>
             <Action
               onClick={() => {
-                handleCopy(part.text)
+                handleCopy(parsedMailboxMessage.body)
               }}
               label="Copy"
             >
