@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
@@ -202,60 +201,6 @@ _TOOL_STATE_NORMALIZATION = {
 }
 
 
-def _normalize_tool_part_states(raw_body: bytes) -> bytes:
-    """Normalize newer AI SDK tool states to parser-supported states.
-
-    Pydantic AI's Vercel request types in this codebase do not yet accept
-    approval-related tool states emitted by newer AI SDK versions.
-    """
-    try:
-        payload = json.loads(raw_body)
-    except Exception:
-        return raw_body
-
-    if not isinstance(payload, dict):
-        return raw_body
-
-    messages = payload.get('messages')
-    if not isinstance(messages, list):
-        return raw_body
-
-    changed = False
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-
-        parts = message.get('parts')
-        if not isinstance(parts, list):
-            continue
-
-        for part in parts:
-            if not isinstance(part, dict):
-                continue
-
-            part_type = part.get('type')
-            state = part.get('state')
-
-            if not isinstance(part_type, str) or not isinstance(state, str):
-                continue
-
-            is_tool_part = part_type.startswith('tool-') or part_type == 'dynamic-tool'
-            if not is_tool_part:
-                continue
-
-            normalized_state = _TOOL_STATE_NORMALIZATION.get(state)
-            if normalized_state is None:
-                continue
-
-            part['state'] = normalized_state
-            changed = True
-
-    if not changed:
-        return raw_body
-
-    return json.dumps(payload, separators=(',', ':')).encode('utf-8')
-
-
 async def _relay_stream(
     redis_url: str,
     stream_key: str,
@@ -311,7 +256,7 @@ def create_chat_router(
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
     ) -> Response:
-        raw_body = _normalize_tool_part_states(await request.body())
+        raw_body = await request.body()
         extra_data = _validate_chat_request(
             raw_body=raw_body,
             model_ids=model_ids,
