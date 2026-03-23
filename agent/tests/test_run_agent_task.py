@@ -5,12 +5,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    ToolCallPart,
-    ToolReturnPart,
 )
 from sqlmodel import select
 
@@ -52,104 +50,6 @@ def _patch_active_run_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_agent_task_module, '_prepare_active_run', fake_prepare)
     monkeypatch.setattr(run_agent_task_module, '_heartbeat_active_run', fake_heartbeat)
     monkeypatch.setattr(run_agent_task_module, 'release_active_run', fake_release)
-
-
-def test_filter_deferred_tool_results_matches_last_model_response_calls() -> None:
-    messages = [
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='query',
-                    tool_call_id='call-old',
-                    args={'sql_query': 'select 1'},
-                ),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='query',
-                    tool_call_id='call-old',
-                    content='already completed',
-                ),
-            ]
-        ),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='query',
-                    tool_call_id='call-latest',
-                    args={'sql_query': 'select 2'},
-                )
-            ]
-        ),
-    ]
-    deferred_tool_results = DeferredToolResults(
-        approvals={
-            'call-old': True,
-            'call-latest': True,
-        }
-    )
-
-    filtered = run_agent_task_module._filter_deferred_tool_results(
-        messages,
-        deferred_tool_results,
-    )
-
-    assert filtered is not None
-    assert filtered.approvals == {'call-latest': True}
-
-
-def test_filter_deferred_tool_results_returns_none_when_no_expected_calls() -> None:
-    filtered = run_agent_task_module._filter_deferred_tool_results(
-        messages=[],
-        deferred_tool_results=DeferredToolResults(approvals={'call-old': True}),
-    )
-
-    assert filtered is None
-
-
-def test_filter_deferred_tool_results_excludes_already_resolved_calls() -> None:
-    messages = [
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='query',
-                    tool_call_id='call-old',
-                    args={'sql_query': 'select 1'},
-                ),
-                ToolCallPart(
-                    tool_name='query',
-                    tool_call_id='call-new',
-                    args={'sql_query': 'select 2'},
-                ),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='query',
-                    tool_call_id='call-old',
-                    content='already completed',
-                )
-            ]
-        ),
-    ]
-
-    deferred_tool_results = DeferredToolResults(
-        approvals={
-            'call-old': True,
-            'call-new': True,
-        }
-    )
-
-    filtered = run_agent_task_module._filter_deferred_tool_results(
-        messages,
-        deferred_tool_results,
-    )
-
-    assert filtered is not None
-    assert filtered.approvals == {'call-new': True}
 
 
 @pytest.mark.anyio

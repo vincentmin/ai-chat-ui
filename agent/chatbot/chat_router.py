@@ -41,11 +41,7 @@ from .lifespan import get_db_runtime
 from .mailbox import push_to_mailbox
 from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
-from .tasks.run_agent_task import (
-    _filter_deferred_tool_results,
-    ensure_agent_mailbox_run,
-    ensure_agent_request_run,
-)
+from .tasks.run_agent_task import ensure_agent_mailbox_run, ensure_agent_request_run
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +267,9 @@ def create_chat_router(
             accept='text/event-stream',
             sdk_version=6,
         )
-        deferred_tool_results = _filter_deferred_tool_results(
-            request_adapter.messages,
-            request_adapter.deferred_tool_results,
-        )
         user_text = _extract_last_user_text(run_input.messages)
 
-        if deferred_tool_results is not None:
+        if request_adapter.deferred_tool_results is not None:
             run_id = await ensure_agent_request_run(
                 agent_key,
                 conversation_id,

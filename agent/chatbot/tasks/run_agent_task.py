@@ -10,11 +10,7 @@ from uuid import uuid4
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
     ModelMessage,
-    RetryPromptPart,
-    ToolCallPart,
-    ToolReturnPart,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
@@ -105,55 +101,6 @@ def _get_worker_db_runtime() -> DatabaseRuntime:
     return _worker_db_runtime
 
 
-def _filter_deferred_tool_results(
-    messages: list[ModelMessage],
-    deferred_tool_results: DeferredToolResults | None,
-) -> DeferredToolResults | None:
-    """Keep deferred tool results only for dangling tool calls."""
-    if deferred_tool_results is None or not messages:
-        return None
-
-    tool_call_ids: set[str] = {
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart | BuiltinToolCallPart)
-    }
-    tool_message_ids: set[str] = {
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart | RetryPromptPart | BuiltinToolCallPart)
-    }
-    dangling_tool_call_ids: set[str] = tool_call_ids - tool_message_ids
-
-    if not dangling_tool_call_ids:
-        return None
-
-    filtered = DeferredToolResults(
-        approvals={
-            tool_call_id: value
-            for tool_call_id, value in deferred_tool_results.approvals.items()
-            if tool_call_id in dangling_tool_call_ids
-        },
-        calls={
-            tool_call_id: value
-            for tool_call_id, value in deferred_tool_results.calls.items()
-            if tool_call_id in dangling_tool_call_ids
-        },
-        metadata={
-            tool_call_id: value
-            for tool_call_id, value in deferred_tool_results.metadata.items()
-            if tool_call_id in dangling_tool_call_ids
-        },
-    )
-
-    if not filtered.approvals and not filtered.calls:
-        return None
-
-    return filtered
-
-
 async def _update_run_status(
     run_id: str, status: ChatRunStatus, error: str | None = None
 ) -> None:
@@ -236,7 +183,6 @@ async def _run_agent_cycle(
     agent_key: str,
     adapter: VercelAIAdapter[Any, Any],
     message_history: list[ModelMessage],
-    deferred_tool_results: DeferredToolResults | None,
     selected_model: str | None,
     system_prompt: str | None,
     runtime_client: redis.Redis,
@@ -263,7 +209,7 @@ async def _run_agent_cycle(
 
     async for chunk in adapter.run_stream(
         output_type=[str, DeferredToolRequests],
-        deferred_tool_results=deferred_tool_results,
+        deferred_tool_results=adapter.deferred_tool_results,
         model=model_ref,
         instructions=run_instructions,
         on_complete=on_complete,
@@ -452,12 +398,6 @@ async def run_agent_request_task(
             sdk_version=6,
         )
 
-        deferred_tool_results = _filter_deferred_tool_results(
-            adapter.messages,
-            adapter.deferred_tool_results,
-        )
-        adapter.__dict__['deferred_tool_results'] = deferred_tool_results
-
         persisted_messages = _load_snapshot_messages(
             db_runtime,
             conversation_id,
@@ -465,8 +405,8 @@ async def run_agent_request_task(
         )
         message_history = _build_request_message_history(
             persisted_messages,
-            list(adapter.messages),
-            deferred_tool_results,
+            adapter.messages,
+            adapter.deferred_tool_results,
         )
         adapter.__dict__['messages'] = []
 
@@ -476,7 +416,6 @@ async def run_agent_request_task(
             agent_key=agent_key,
             adapter=adapter,
             message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
             selected_model=selected_model,
             system_prompt=system_prompt,
             runtime_client=runtime_client,
@@ -534,7 +473,6 @@ async def run_agent_mailbox_task(
                     *persisted_history,
                     *mailbox_messages_to_model_requests(mailbox_msgs),
                 ],
-                deferred_tool_results=None,
                 selected_model=selected_model,
                 system_prompt=system_prompt,
                 runtime_client=runtime_client,
