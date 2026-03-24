@@ -11,11 +11,19 @@ describe('message display helpers', () => {
     })
   })
 
-  it('keeps parsing the legacy mailbox prefix for existing conversations', () => {
-    expect(parseMailboxMessage('[Message from arxiv]: hello')).toEqual({
-      body: 'hello',
+  it('correctly parses body that contains }]] without treating it as metadata', () => {
+    expect(parseMailboxMessage('[[mailbox {"sender":"arxiv"}]]\nbody with }]] inside')).toEqual({
+      body: 'body with }]] inside',
       sender: 'arxiv',
       isMailbox: true,
+    })
+  })
+
+  it('returns plain text for unrecognised messages', () => {
+    expect(parseMailboxMessage('[Message from arxiv]: hello')).toEqual({
+      body: '[Message from arxiv]: hello',
+      sender: null,
+      isMailbox: false,
     })
   })
 
