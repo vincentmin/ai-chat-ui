@@ -7,6 +7,9 @@ import httpx
 import pydantic_ai
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
+from chatbot.agent_deps import AgentDeps
+from chatbot.history_processor import mailbox_history_processor
+
 ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 ARXIV_ABS_BASE_URL = 'https://arxiv.org/abs/'
 ARXIV_PDF_BASE_URL = 'https://arxiv.org/pdf/'
@@ -39,13 +42,16 @@ def _proxy_pdf_url(arxiv_id: str) -> str:
 
 
 agent = pydantic_ai.Agent(
-    model='openai-responses:gpt-4.1-nano',
+    model='openai-responses:gpt-5-mini',
     instructions=(
         'You are an expert research assistant with access to Arxiv. '
         'Use search to find papers, fetch to read paper PDFs, and display_paper '
         'to show or preview a paper to the user in the UI. Be proactive in suggesting '
         'to display papers that might be relevant to the user.'
     ),
+    deps_type=AgentDeps,
+    history_processors=[mailbox_history_processor],
+    retries=5,
 )
 
 

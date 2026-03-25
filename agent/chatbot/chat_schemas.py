@@ -62,3 +62,31 @@ class ChatMessagesResponse(
     populate_by_name=True,
 ):
     messages: list[UIMessage]
+
+
+class TeamAgentInfo(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    key: str
+    title: str
+    api_base_path: str
+
+
+class TeamConfigureResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    agents: list[TeamAgentInfo]
+
+
+class RunStatusResponse(
+    BaseModel,
+    alias_generator=to_camel,
+    populate_by_name=True,
+):
+    active: bool
+    run_id: str | None = None
+    status: str | None = None

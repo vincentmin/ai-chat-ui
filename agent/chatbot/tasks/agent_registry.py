@@ -12,6 +12,9 @@ from ..sql_agent import agent as sql_agent
 
 ModelsParam = Mapping[str, Model | KnownModelName | str]
 
+# All known agent keys. Order is stable and used for team_agents lists.
+AGENT_KEYS: list[str] = ['sql', 'arxiv']
+
 
 def get_agent(agent_key: str) -> Agent[Any, Any]:
     if agent_key == 'sql':
@@ -19,6 +22,11 @@ def get_agent(agent_key: str) -> Agent[Any, Any]:
     if agent_key == 'arxiv':
         return arxiv_agent_module.agent
     raise ValueError(f'Unsupported agent key: {agent_key}')
+
+
+def get_team_agents() -> list[str]:
+    """Return the list of all agent keys in the team."""
+    return list(AGENT_KEYS)
 
 
 def build_model_lookup(

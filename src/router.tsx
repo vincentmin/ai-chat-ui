@@ -1,4 +1,5 @@
 import App from './App'
+import TeamPage from './TeamPage'
 import { ThemeProvider } from './components/theme-provider'
 import { SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
@@ -110,6 +111,43 @@ function ArxivConversationRoutePage() {
   )
 }
 
+function TeamRoutePage() {
+  const navigate = useNavigate()
+
+  return (
+    <TeamPage
+      conversationId={null}
+      onConversationIdChange={(id) => {
+        if (!id) {
+          navigate({ to: '/team' }).catch(handleNavigationError)
+          return
+        }
+
+        navigate({ to: '/team/chat/$conversationId', params: { conversationId: id } }).catch(handleNavigationError)
+      }}
+    />
+  )
+}
+
+function TeamConversationRoutePage() {
+  const navigate = useNavigate()
+  const { conversationId } = useParams({ from: '/team/chat/$conversationId' })
+
+  return (
+    <TeamPage
+      conversationId={conversationId}
+      onConversationIdChange={(id) => {
+        if (!id) {
+          navigate({ to: '/team' }).catch(handleNavigationError)
+          return
+        }
+
+        navigate({ to: '/team/chat/$conversationId', params: { conversationId: id } }).catch(handleNavigationError)
+      }}
+    />
+  )
+}
+
 export function createAppRouter() {
   const rootRoute = createRootRoute({
     component: RootLayout,
@@ -155,6 +193,18 @@ export function createAppRouter() {
     component: ArxivConversationRoutePage,
   })
 
+  const teamRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/team',
+    component: TeamRoutePage,
+  })
+
+  const teamConversationRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/team/chat/$conversationId',
+    component: TeamConversationRoutePage,
+  })
+
   const routeTree = rootRoute.addChildren([
     indexRoute,
     legacyConversationRoute,
@@ -162,6 +212,8 @@ export function createAppRouter() {
     sqlConversationRoute,
     arxivRoute,
     arxivConversationRoute,
+    teamRoute,
+    teamConversationRoute,
   ])
 
   return createRouter({

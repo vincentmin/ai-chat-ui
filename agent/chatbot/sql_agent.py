@@ -10,6 +10,9 @@ import pydantic_ai
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
+from chatbot.agent_deps import AgentDeps
+from chatbot.history_processor import mailbox_history_processor
+
 CHINOOK_DB_PATH = Path(__file__).with_name('chinook.db')
 
 
@@ -37,10 +40,13 @@ agent = pydantic_ai.Agent(
         'Use the query tool for analysis and the display tool when the user asks '
         'to show tabular results in the UI.'
     ),
+    deps_type=AgentDeps,
+    history_processors=[mailbox_history_processor],
+    retries=5,
 )
 
 
-@agent.tool_plain(requires_approval=True)
+@agent.tool_plain
 def query(sql_query: str) -> str:
     """Run a SQL query and return a truncated preview of the result."""
     try:
@@ -54,7 +60,7 @@ def query(sql_query: str) -> str:
         raise pydantic_ai.ModelRetry(f'Failed to run SQL query: {e}') from e
 
 
-@agent.tool_plain(requires_approval=True)
+@agent.tool_plain
 def display(sql_query: str) -> pydantic_ai.ToolReturn:
     """Run a SQL query and send full results to the frontend as data metadata."""
     try:

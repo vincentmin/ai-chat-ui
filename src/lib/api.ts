@@ -1,4 +1,4 @@
-import type { ChatHistoryResponse, ConversationsResponse, RemoteConfig } from '@/types'
+import type { ChatHistoryResponse, ConversationsResponse, RemoteConfig, RunStatus, TeamConfig } from '@/types'
 
 export async function getConfig(apiBasePath: string): Promise<RemoteConfig> {
   const res = await fetch(`${apiBasePath}/configure`)
@@ -6,6 +6,14 @@ export async function getConfig(apiBasePath: string): Promise<RemoteConfig> {
     throw new Error('Failed to load configuration')
   }
   return (await res.json()) as RemoteConfig
+}
+
+export async function getRunStatus(apiBasePath: string, conversationId: string): Promise<RunStatus> {
+  const res = await fetch(`${apiBasePath}/chat/${conversationId}/run`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch run status')
+  }
+  return (await res.json()) as RunStatus
 }
 
 export async function getConversationMessages(
@@ -33,5 +41,30 @@ export async function removeConversation(apiBasePath: string, conversationId: st
   })
   if (!res.ok) {
     throw new Error('Failed to delete conversation')
+  }
+}
+
+export async function getTeamConfig(): Promise<TeamConfig> {
+  const res = await fetch('/api/v1/team/configure')
+  if (!res.ok) {
+    throw new Error('Failed to load team configuration')
+  }
+  return (await res.json()) as TeamConfig
+}
+
+export async function getTeamConversations(): Promise<ConversationsResponse> {
+  const res = await fetch('/api/v1/team/chats')
+  if (!res.ok) {
+    throw new Error('Failed to fetch team conversations')
+  }
+  return (await res.json()) as ConversationsResponse
+}
+
+export async function removeTeamConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`/api/v1/team/chat/${conversationId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    throw new Error('Failed to delete team conversation')
   }
 }

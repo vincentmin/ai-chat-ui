@@ -27,11 +27,14 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { getConversations, removeConversation } from '@/lib/api'
+import { getConversations, getTeamConversations, removeConversation, removeTeamConversation } from '@/lib/api'
+import { formatConversationPreview } from '@/lib/message-display'
 import { cn } from '@/lib/utils'
 import type { ConversationEntry } from '@/types'
 import { ModeToggle } from './mode-toggle'
 import logoSvg from '../assets/logo.svg'
+
+type SidebarMode = 'sql' | 'arxiv' | 'team'
 
 interface AppSidebarProps {
   apiBasePath: string
@@ -41,6 +44,20 @@ interface AppSidebarProps {
   onConversationIdChange: (id: string | null) => void
 }
 
+function getConversationRoute(
+  mode: SidebarMode,
+): '/sql/chat/$conversationId' | '/arxiv/chat/$conversationId' | '/team/chat/$conversationId' {
+  if (mode === 'sql') return '/sql/chat/$conversationId'
+  if (mode === 'arxiv') return '/arxiv/chat/$conversationId'
+  return '/team/chat/$conversationId'
+}
+
+function getNewConversationRoute(mode: SidebarMode): '/sql' | '/arxiv' | '/team' {
+  if (mode === 'sql') return '/sql'
+  if (mode === 'arxiv') return '/arxiv'
+  return '/team'
+}
+
 export function AppSidebar({
   apiBasePath,
   conversationBasePath,
@@ -48,11 +65,14 @@ export function AppSidebar({
   conversationId,
   onConversationIdChange,
 }: AppSidebarProps) {
-  const isSql = conversationBasePath === '/sql'
+  const mode: SidebarMode =
+    conversationBasePath === '/sql' ? 'sql' : conversationBasePath === '/team' ? 'team' : 'arxiv'
+  const conversationRoute = getConversationRoute(mode)
+  const newConversationRoute = getNewConversationRoute(mode)
   const queryClient = useQueryClient()
   const conversationsQueryKey = useMemo(() => ['conversations', apiBasePath] as const, [apiBasePath])
   const conversationsQuery = useQuery({
-    queryFn: () => getConversations(apiBasePath),
+    queryFn: () => (mode === 'team' ? getTeamConversations() : getConversations(apiBasePath)),
     queryKey: conversationsQueryKey,
   })
   const conversations = conversationsQuery.data?.conversations ?? []
@@ -90,7 +110,11 @@ export function AppSidebar({
     }
 
     const deleteCurrentConversation = async () => {
-      await removeConversation(apiBasePath, conversationToDelete.id)
+      if (mode === 'team') {
+        await removeTeamConversation(conversationToDelete.id)
+      } else {
+        await removeConversation(apiBasePath, conversationToDelete.id)
+      }
       setDeleteDialogOpen(false)
       setConversationToDelete(null)
       await invalidateConversations()
@@ -126,30 +150,25 @@ export function AppSidebar({
             <SidebarMenu className="mb-2">
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Start a new conversation">
-                  {isSql ? (
-                    <Link to="/sql">
-                      <CirclePlus />
-                      <span>New conversation</span>
-                    </Link>
-                  ) : (
-                    <Link to="/arxiv">
-                      <CirclePlus />
-                      <span>New conversation</span>
-                    </Link>
-                  )}
+                  <Link to={newConversationRoute}>
+                    <CirclePlus />
+                    <span>New conversation</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
 
             <SidebarGroupContent>
               <SidebarMenu>
-                {conversations.map((conversation, index) => (
-                  <SidebarMenuItem key={index} className="group/sidebar-menu-item">
-                    <div className="flex items-center gap-1 h-auto">
-                      <SidebarMenuButton asChild tooltip={conversation.firstMessage} className="flex-1">
-                        {isSql ? (
+                {conversations.map((conversation, index) => {
+                  const conversationPreview = formatConversationPreview(conversation.firstMessage)
+
+                  return (
+                    <SidebarMenuItem key={index} className="group/sidebar-menu-item">
+                      <div className="flex items-center gap-1 h-auto">
+                        <SidebarMenuButton asChild tooltip={conversationPreview} className="flex-1">
                           <Link
-                            to="/sql/chat/$conversationId"
+                            to={conversationRoute}
                             params={{ conversationId: conversation.id }}
                             className={cn('h-auto flex items-start gap-2', {
                               'bg-accent pointer-events-none': conversation.id === conversationId,
@@ -157,48 +176,32 @@ export function AppSidebar({
                           >
                             <MessageCircle className="size-3 mt-1" />
                             <span className="flex flex-col items-start">
-                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
+                              <span className="truncate max-w-44">{conversationPreview}</span>
                               <span className="text-xs opacity-30">
                                 {new Date(conversation.timestamp).toLocaleString()}
                               </span>
                             </span>
                           </Link>
-                        ) : (
-                          <Link
-                            to="/arxiv/chat/$conversationId"
-                            params={{ conversationId: conversation.id }}
-                            className={cn('h-auto flex items-start gap-2', {
-                              'bg-accent pointer-events-none': conversation.id === conversationId,
-                            })}
-                          >
-                            <MessageCircle className="size-3 mt-1" />
-                            <span className="flex flex-col items-start">
-                              <span className="truncate max-w-44">{conversation.firstMessage}</span>
-                              <span className="text-xs opacity-30">
-                                {new Date(conversation.timestamp).toLocaleString()}
-                              </span>
-                            </span>
-                          </Link>
-                        )}
-                      </SidebarMenuButton>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-auto p-1.5 opacity-0 group-hover/sidebar-menu-item:opacity-100 transition-opacity group-data-[state=collapsed]:hidden absolute right-0 self-start"
-                            onClick={(e) => {
-                              handleDeleteClick(e, conversation)
-                            }}
-                          >
-                            <Trash className="size-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Delete conversation</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </SidebarMenuItem>
-                ))}
+                        </SidebarMenuButton>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-auto p-1.5 opacity-0 group-hover/sidebar-menu-item:opacity-100 transition-opacity group-data-[state=collapsed]:hidden absolute right-0 self-start"
+                              onClick={(e) => {
+                                handleDeleteClick(e, conversation)
+                              }}
+                            >
+                              <Trash className="size-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete conversation</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </SidebarMenuItem>
+                  )
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

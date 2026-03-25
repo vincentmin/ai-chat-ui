@@ -83,21 +83,6 @@ def get_latest_snapshot_per_conversation(
     return latest
 
 
-def get_active_run(
-    session: Session, conversation_id: str, agent_key: str
-) -> ChatRun | None:
-    """Return the most recent QUEUED or RUNNING ChatRun for a conversation, or None."""
-    active_statuses = {ChatRunStatus.QUEUED.value, ChatRunStatus.RUNNING.value}
-    runs = session.exec(
-        select(ChatRun).where(
-            ChatRun.conversation_id == conversation_id,
-            ChatRun.agent_key == agent_key,
-        )
-    ).all()
-    active = [r for r in runs if r.status in active_statuses]
-    return max(active, key=lambda r: r.created_at) if active else None
-
-
 def delete_chat_records(session: Session, conversation_id: str, agent_key: str) -> None:
     """Delete all AgentRunSnapshot records for a conversation."""
     snapshots = session.exec(
@@ -144,4 +129,40 @@ def update_run_status(
     run.error = error
     run.updated_at = datetime.now(UTC)
     session.add(run)
+    session.commit()
+
+
+def get_team_conversations(
+    session: Session, agent_keys: list[str]
+) -> dict[str, dict[str, AgentRunSnapshot]]:
+    """Return the latest snapshot per (conversation_id, agent_key) across all agents.
+
+    Returns a nested dict: {conversation_id: {agent_key: snapshot}}.
+    """
+    snapshots = session.exec(
+        select(AgentRunSnapshot).where(
+            AgentRunSnapshot.agent_key.in_(agent_keys)  # type: ignore[union-attr]
+        )
+    ).all()
+    result: dict[str, dict[str, AgentRunSnapshot]] = {}
+    for snap in snapshots:
+        conv = result.setdefault(snap.conversation_id, {})
+        current = conv.get(snap.agent_key)
+        if current is None or snap.created_at > current.created_at:
+            conv[snap.agent_key] = snap
+    return result
+
+
+def delete_team_chat_records(
+    session: Session, conversation_id: str, agent_keys: list[str]
+) -> None:
+    """Delete all AgentRunSnapshot records for a conversation across all agents."""
+    snapshots = session.exec(
+        select(AgentRunSnapshot).where(
+            AgentRunSnapshot.conversation_id == conversation_id,
+            AgentRunSnapshot.agent_key.in_(agent_keys),  # type: ignore[union-attr]
+        )
+    ).all()
+    for snapshot in snapshots:
+        session.delete(snapshot)
     session.commit()

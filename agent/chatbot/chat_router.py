@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
-import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -17,7 +15,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import UIMessage
+from redis import asyncio as redis
 
+from .active_run import get_active_run_lease
 from .chat_schemas import (
     ChatMessagesResponse,
     ChatRequestExtra,
@@ -27,22 +28,20 @@ from .chat_schemas import (
     DeleteChatResponse,
     HealthResponse,
     ModelInfo,
+    RunStatusResponse,
 )
 from .db.message_codec import messages_from_json
 from .db.runtime import DatabaseRuntime
 from .db.service import (
-    create_chat_run,
     delete_chat_records,
-    get_active_run,
     get_latest_snapshot,
     get_latest_snapshot_per_conversation,
-    supersede_stale_runs,
-    update_run_task_id,
 )
 from .lifespan import get_db_runtime
+from .mailbox import push_to_mailbox
 from .settings import AppSettings, get_settings
 from .streaming.redis_stream import chat_run_stream_key, iter_stream_events
-from .tasks.run_agent_task import run_agent_task
+from .tasks.run_agent_task import ensure_agent_mailbox_run, ensure_agent_request_run
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +54,21 @@ def _require_redis_url(settings: AppSettings) -> str:
     if not isinstance(redis_url, str) or not redis_url:
         raise HTTPException(status_code=503, detail='Redis runtime unavailable')
     return redis_url
+
+
+def _extract_last_user_text(messages: Sequence[UIMessage]) -> str | None:
+    """Extract the text content of the last user message, if any."""
+    for msg in reversed(messages):
+        if msg.role != 'user':
+            continue
+        texts: list[str] = []
+        for part in msg.parts:
+            text = getattr(part, 'text', None)
+            if isinstance(text, str):
+                texts.append(text)
+        if texts:
+            return '\n'.join(texts)
+    return None
 
 
 def _validate_chat_request(
@@ -183,60 +197,6 @@ _TOOL_STATE_NORMALIZATION = {
 }
 
 
-def _normalize_tool_part_states(raw_body: bytes) -> bytes:
-    """Normalize newer AI SDK tool states to parser-supported states.
-
-    Pydantic AI's Vercel request types in this codebase do not yet accept
-    approval-related tool states emitted by newer AI SDK versions.
-    """
-    try:
-        payload = json.loads(raw_body)
-    except Exception:
-        return raw_body
-
-    if not isinstance(payload, dict):
-        return raw_body
-
-    messages = payload.get('messages')
-    if not isinstance(messages, list):
-        return raw_body
-
-    changed = False
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-
-        parts = message.get('parts')
-        if not isinstance(parts, list):
-            continue
-
-        for part in parts:
-            if not isinstance(part, dict):
-                continue
-
-            part_type = part.get('type')
-            state = part.get('state')
-
-            if not isinstance(part_type, str) or not isinstance(state, str):
-                continue
-
-            is_tool_part = part_type.startswith('tool-') or part_type == 'dynamic-tool'
-            if not is_tool_part:
-                continue
-
-            normalized_state = _TOOL_STATE_NORMALIZATION.get(state)
-            if normalized_state is None:
-                continue
-
-            part['state'] = normalized_state
-            changed = True
-
-    if not changed:
-        return raw_body
-
-    return json.dumps(payload, separators=(',', ':')).encode('utf-8')
-
-
 async def _relay_stream(
     redis_url: str,
     stream_key: str,
@@ -291,9 +251,8 @@ def create_chat_router(
         request: Request,
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
-        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
-    ) -> StreamingResponse:
-        raw_body = _normalize_tool_part_states(await request.body())
+    ) -> Response:
+        raw_body = await request.body()
         extra_data = _validate_chat_request(
             raw_body=raw_body,
             model_ids=model_ids,
@@ -301,28 +260,66 @@ def create_chat_router(
         )
         redis_url = _require_redis_url(settings)
 
-        # POST always means a new user message — supersede any stale active runs
-        # so they don't block the new enqueue.
-        with db_runtime.session() as session:
-            supersede_stale_runs(session, conversation_id, agent_key)
-
-        run_id = str(uuid4())
-        with db_runtime.session() as session:
-            create_chat_run(session, run_id, conversation_id, agent_key)
-
-        task = await run_agent_task.kiq(
-            run_id=run_id,
-            conversation_id=conversation_id,
-            agent_key=agent_key,
-            request_body=raw_body.decode('utf-8'),
-            selected_model=extra_data.model,
-            system_prompt=(
-                extra_data.system_prompt if can_override_system_prompt else None
-            ),
+        run_input = VercelAIAdapter[Any, Any].build_run_input(raw_body)
+        request_adapter = VercelAIAdapter[Any, Any](
+            agent=agent,
+            run_input=run_input,
+            accept='text/event-stream',
+            sdk_version=6,
         )
+        user_text = _extract_last_user_text(run_input.messages)
 
-        with db_runtime.session() as session:
-            update_run_task_id(session, run_id, task.task_id)
+        if request_adapter.deferred_tool_results is not None:
+            run_id = await ensure_agent_request_run(
+                agent_key,
+                conversation_id,
+                request_body=raw_body.decode('utf-8'),
+                selected_model=extra_data.model,
+                system_prompt=(
+                    extra_data.system_prompt if can_override_system_prompt else None
+                ),
+            )
+            if run_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        'Cannot resume deferred tool request while an '
+                        'agent run is already active'
+                    ),
+                )
+
+            stream_key = chat_run_stream_key(
+                agent_key=agent_key,
+                conversation_id=conversation_id,
+                run_id=run_id,
+            )
+            return _streaming_response(redis_url, stream_key)
+
+        if not user_text:
+            raise HTTPException(status_code=400, detail='No user message content found')
+
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            await push_to_mailbox(
+                redis_client,
+                agent_key=agent_key,
+                conversation_id=conversation_id,
+                sender='user',
+                content=user_text,
+            )
+            run_id = await ensure_agent_mailbox_run(
+                agent_key,
+                conversation_id,
+                selected_model=extra_data.model,
+                system_prompt=(
+                    extra_data.system_prompt if can_override_system_prompt else None
+                ),
+            )
+        finally:
+            await redis_client.aclose()
+
+        if run_id is None:
+            return Response(status_code=202)
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
@@ -336,26 +333,53 @@ def create_chat_router(
     async def stream_chat(
         conversation_id: str,
         settings: AppSettings = Depends(get_settings),
-        db_runtime: DatabaseRuntime = Depends(get_db_runtime),
     ) -> Response:
         redis_url = _require_redis_url(settings)
 
-        with db_runtime.session() as session:
-            active_run = get_active_run(session, conversation_id, agent_key)
-            latest_snapshot = get_latest_snapshot(session, conversation_id, agent_key)
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            active_lease = await get_active_run_lease(
+                redis_client,
+                agent_key,
+                conversation_id,
+            )
+        finally:
+            await redis_client.aclose()
 
-        if active_run is None or active_run.run_id is None:
-            return Response(status_code=204)
-
-        if latest_snapshot is not None and latest_snapshot.run_id == active_run.run_id:
+        if active_lease is None:
             return Response(status_code=204)
 
         stream_key = chat_run_stream_key(
             agent_key=agent_key,
             conversation_id=conversation_id,
-            run_id=active_run.run_id,
+            run_id=active_lease.run_id,
         )
         return _streaming_response(redis_url, stream_key, start_id='0-0')
+
+    @router.get('/chat/{conversation_id}/run')
+    async def get_run_status(
+        conversation_id: str,
+        settings: AppSettings = Depends(get_settings),
+    ) -> RunStatusResponse:
+        redis_url = _require_redis_url(settings)
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        try:
+            active_lease = await get_active_run_lease(
+                redis_client,
+                agent_key,
+                conversation_id,
+            )
+        finally:
+            await redis_client.aclose()
+
+        if active_lease is None:
+            return RunStatusResponse(active=False)
+
+        return RunStatusResponse(
+            active=True,
+            run_id=active_lease.run_id,
+            status=active_lease.status,
+        )
 
     @router.get('/chat/{conversation_id}')
     async def get_chat(

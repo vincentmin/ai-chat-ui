@@ -9,7 +9,6 @@ from chatbot.db.runtime import DatabaseRuntime
 from chatbot.db.service import (
     create_chat_run,
     delete_chat_records,
-    get_active_run,
     get_latest_snapshot,
     get_latest_snapshot_per_conversation,
     save_run_snapshot,
@@ -37,40 +36,6 @@ def test_update_run_task_id_sets_task_identifier(db_runtime: DatabaseRuntime) ->
         run = session.exec(select(ChatRun).where(ChatRun.run_id == 'run-2')).one()
 
     assert run.task_id == 'task-123'
-
-
-def test_get_active_run_prefers_latest_running_or_queued(
-    db_runtime: DatabaseRuntime,
-) -> None:
-    with db_runtime.session() as session:
-        create_chat_run(session, 'run-old', 'conversation-1', 'sql')
-        create_chat_run(session, 'run-new', 'conversation-1', 'sql')
-        create_chat_run(session, 'run-done', 'conversation-1', 'sql')
-
-        old_run = session.exec(select(ChatRun).where(ChatRun.run_id == 'run-old')).one()
-        new_run = session.exec(select(ChatRun).where(ChatRun.run_id == 'run-new')).one()
-        done_run = session.exec(
-            select(ChatRun).where(ChatRun.run_id == 'run-done')
-        ).one()
-
-        old_run.status = ChatRunStatus.RUNNING.value
-        new_run.status = ChatRunStatus.QUEUED.value
-        done_run.status = ChatRunStatus.COMPLETED.value
-
-        base = datetime.now(UTC)
-        old_run.created_at = base
-        new_run.created_at = base + timedelta(seconds=1)
-        done_run.created_at = base + timedelta(seconds=2)
-
-        session.add(old_run)
-        session.add(new_run)
-        session.add(done_run)
-        session.commit()
-
-        active = get_active_run(session, 'conversation-1', 'sql')
-
-    assert active is not None
-    assert active.run_id == 'run-new'
 
 
 def test_supersede_stale_runs_marks_active_runs_failed(
